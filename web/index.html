@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#fbfaf7" />
+    <title>WaveBoard</title>
+    <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="importmap">
+      { "imports": { "three": "./vendor/three.module.js" } }
+    </script>
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body data-page="home">
+    <main id="main" tabindex="-1"></main>
+    <button
+      id="menu-toggle"
+      class="menu-toggle"
+      aria-label="Open menu"
+      aria-expanded="false"
+      aria-controls="workspace-menu"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="3"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="m5 9 7 7 7-7" />
+      </svg>
+    </button>
+    <button
+      id="menu-backdrop"
+      class="menu-backdrop"
+      aria-label="Close menu"
+      tabindex="-1"
+      hidden
+    ></button>
+    <section
+      id="workspace-menu"
+      class="workspace-menu"
+      role="dialog"
+      aria-label="Workspace menu"
+      aria-modal="true"
+      hidden
+    >
+      <div class="menu-header">
+        <button class="menu-home" data-page="home">
+          <span data-icon="home"></span>Home</button
+        ><button id="menu-close" class="icon-button" aria-label="Close menu">
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <div id="menu-tools" class="menu-grid"></div>
+      <div class="menu-footer">
+        <button id="fullscreen-button" class="menu-tool">
+          <span data-icon="expand"></span>Full screen</button
+        ><button id="help-button" class="menu-tool">
+          <span data-icon="help"></span>Help</button
+        ><button id="settings-button" class="menu-tool">
+          <span data-icon="settings"></span>Settings
+        </button>
+      </div>
+    </section>
+    <dialog id="dialog"><div id="dialog-content"></div></dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <input type="file" id="local-file" hidden />
+  </body>
+</html>

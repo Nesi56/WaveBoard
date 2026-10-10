@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=WaveBoard
+Comment=Open the WaveBoard projector workspace
+# Replace these paths with the absolute location of your checkout before use.
+Exec=/bin/bash /home/YOUR_USERNAME/WaveBoard/scripts/start-ubuntu.sh
+Path=/home/YOUR_USERNAME/WaveBoard
+Terminal=false
+Categories=Education;Graphics;
+StartupNotify=false

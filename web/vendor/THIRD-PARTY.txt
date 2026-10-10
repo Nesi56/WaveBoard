@@ -1,0 +1,15 @@
+Three.js 0.169.0 (MIT)
+Source: https://github.com/mrdoob/three.js/tree/r169
+Downloaded from the version-pinned npm package via https://cdn.jsdelivr.net/npm/three@0.169.0/
+
+Included: three.module.js, OrbitControls.js, GLTFLoader.js, OBJLoader.js,
+STLLoader.js, utils/BufferGeometryUtils.js, THREE-LICENSE.txt.
+
+GLTFLoader.js has one relative import adjusted to ./utils/BufferGeometryUtils.js
+because this project's vendor directory keeps loaders at its root.
+OrbitControls.js captures only trusted pointer events and releases only captured
+pointers so WaveBoard's synthetic camera input adapter can orbit models.
+All other files are unmodified upstream source. No internet is needed at runtime.
+
+The host page must define the import map before importing viewer3d.js:
+{"imports":{"three":"./vendor/three.module.js"}}

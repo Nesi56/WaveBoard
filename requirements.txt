@@ -1,0 +1,2 @@
+# WaveBoard's Python server uses only the Python 3.10+ standard library.
+# Ubuntu presentation playback: sudo apt install libreoffice-impress poppler-utils
