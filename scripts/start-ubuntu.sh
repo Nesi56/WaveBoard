@@ -7,11 +7,15 @@ waveboard_project_dir="$(cd -- "$waveboard_script_dir/.." && pwd)"
 waveboard_port="${WAVEBOARD_PORT:-8765}"
 waveboard_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/waveboard"
 waveboard_server_pid=""
+waveboard_hands=0
+waveboard_hands_pid=""
 waveboard_extra_args=()
 
 usage() {
-  printf 'Usage: bash scripts/start-ubuntu.sh [--root /path/to/files]...\n'
+  printf 'Usage: bash scripts/start-ubuntu.sh [--hands] [--root /path/to/files]...\n'
   printf 'Set WAVEBOARD_PORT to change the default local port (8765).\n'
+  printf -- '--hands also starts camera hand control (gesture-lab/server.py) with\n'
+  printf 'WAVEBOARD_HANDS_PYTHON, default ~/vision-env/bin/python.\n'
 }
 
 while (($#)); do
@@ -23,6 +27,10 @@ while (($#)); do
       fi
       waveboard_extra_args+=(--root "$2")
       shift 2
+      ;;
+    --hands)
+      waveboard_hands=1
+      shift
       ;;
     -h|--help)
       usage
@@ -77,10 +85,13 @@ except OSError as error:
 PY
 
 waveboard_cleanup() {
-  if [[ -n "$waveboard_server_pid" ]] && kill -0 "$waveboard_server_pid" 2>/dev/null; then
-    kill "$waveboard_server_pid" 2>/dev/null || true
-    wait "$waveboard_server_pid" 2>/dev/null || true
-  fi
+  local pid
+  for pid in "$waveboard_hands_pid" "$waveboard_server_pid"; do
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
 }
 trap waveboard_cleanup EXIT
 trap 'exit 130' INT
@@ -120,6 +131,17 @@ then
 fi
 
 printf 'WaveBoard is ready at %s\n' "$waveboard_url"
+
+if ((waveboard_hands)); then
+  waveboard_hands_python="${WAVEBOARD_HANDS_PYTHON:-$HOME/vision-env/bin/python}"
+  if [[ ! -x "$waveboard_hands_python" ]]; then
+    waveboard_hands_python="$(command -v python3)"
+  fi
+  # Loopback only; --allow-origin lets a page on a WAVEBOARD_PORT other than 8765 connect.
+  "$waveboard_hands_python" gesture-lab/server.py --allow-origin "$waveboard_url" >"$waveboard_cache_dir/hands.log" 2>&1 &
+  waveboard_hands_pid=$!
+  printf 'Hand control is starting. If no cursor appears, check %s/hands.log\n' "$waveboard_cache_dir"
+fi
 printf 'Close the kiosk window (Alt+F4) to stop this launcher and its local server.\n'
 "$waveboard_browser" \
   --kiosk \

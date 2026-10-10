@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.task
+*.download
+environment-working.txt
+.venv/
+captures/

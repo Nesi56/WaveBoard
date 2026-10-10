@@ -1,0 +1,3 @@
+# Add this to the SAME environment that already runs your hand-drawing app.
+# Existing mediapipe, OpenCV and NumPy versions are intentionally preserved.
+websockets>=14,<18
