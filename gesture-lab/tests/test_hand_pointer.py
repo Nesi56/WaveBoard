@@ -1,5 +1,6 @@
 """Run from project root: python -m unittest discover -s tests -v"""
 
+import math
 import unittest
 
 from hand_pointer import SCREEN, HandPointer, OneEuro, ScreenMap, SwipeDetector
@@ -34,10 +35,32 @@ class HandPointerTests(unittest.TestCase):
         self.assertAlmostEqual(result["x"], 0.0)
         self.assertAlmostEqual(result["y"], 1.0)
 
+    def test_camera_coordinates_preserve_position_beyond_the_reach_crop(self):
+        tracker = HandPointer(reach=0.1, smoothing=False)
+        result = tracker.update([hand("a", 0.02, 0.98)], 0, aspect_ratio=4 / 3)
+        self.assertEqual((result["x"], result["y"]), (0.0, 1.0))
+        self.assertAlmostEqual(result["camera_x"], 0.02)
+        self.assertAlmostEqual(result["camera_y"], 0.98)
+        self.assertTrue(all(math.isfinite(result[key]) for key in ("camera_x", "camera_y")))
+
+    def test_camera_coordinates_share_cursor_smoothing_and_hold(self):
+        tracker = HandPointer(reach=0.1)
+        tracker.update([hand("a", 0.3, 0.4)], 0)
+        moved = tracker.update([hand("a", 0.7, 0.6)], 33)
+        expected = tracker._map.to_camera(moved["x"] * SCREEN[0], moved["y"] * SCREEN[1])
+        self.assertAlmostEqual(moved["camera_x"], expected[0])
+        self.assertAlmostEqual(moved["camera_y"], expected[1])
+        self.assertLess(moved["camera_x"], 0.7)
+        held = tracker.update([], 66)
+        self.assertEqual((held["camera_x"], held["camera_y"]),
+                         (moved["camera_x"], moved["camera_y"]))
+
     def test_no_hands_hides_the_pointer(self):
         result = pointer().update([], 0)
         self.assertFalse(result["visible"])
         self.assertIsNone(result["x"])
+        self.assertIsNone(result["camera_x"])
+        self.assertIsNone(result["camera_y"])
 
     def test_small_movement_during_a_pinch_stays_a_tap(self):
         tracker = pointer()
@@ -85,6 +108,26 @@ class HandPointerTests(unittest.TestCase):
         for i, t in enumerate(range(2000, 2400, 33)):
             result = tracker.update([hand("a", 0.8 - i * 0.05, 0.5, pinch=True, fingers=FINGERS_OPEN)], t)
         self.assertEqual(result["swipe_id"], 0)
+
+    def test_swipe_camera_endpoints_persist_with_their_swipe_id(self):
+        tracker = HandPointer(reach=0.1, smoothing=False)
+        idle = tracker.update([hand("a", 0.7, 0.4, fingers=FINGERS_OPEN)], 0)
+        self.assertIsNone(idle["camera_swipe"])
+        swiped = tracker.update([hand("a", 0.4, 0.45, fingers=FINGERS_OPEN)], 100)
+        self.assertEqual(swiped["swipe_id"], 1)
+        self.assertEqual(swiped["swipe"], -1)
+        for actual, expected in zip(swiped["camera_swipe"], ((0.7, 0.5), (0.4, 0.55))):
+            self.assertAlmostEqual(actual[0], expected[0])
+            self.assertAlmostEqual(actual[1], expected[1])
+        held = tracker.update([], 150)
+        self.assertEqual(held["swipe_id"], swiped["swipe_id"])
+        self.assertEqual(held["camera_swipe"], swiped["camera_swipe"])
+        tracker.update([hand("a", 0.2, 0.4, fingers=FINGERS_OPEN)], 1000)
+        reversed_swipe = tracker.update([hand("a", 0.6, 0.4, fingers=FINGERS_OPEN)], 1100)
+        self.assertEqual(reversed_swipe["swipe_id"], 2)
+        self.assertEqual(reversed_swipe["swipe"], 1)
+        self.assertAlmostEqual(reversed_swipe["camera_swipe"][0][0], 0.2)
+        self.assertAlmostEqual(reversed_swipe["camera_swipe"][1][0], 0.6)
 
     def test_short_dropout_holds_cursor_and_press_without_inventing_motion(self):
         tracker = pointer()
@@ -230,6 +273,30 @@ class SkeletonTests(unittest.TestCase):
         self.assertAlmostEqual((thumb[0] + index[0]) / 2, result["x"], places=3)
         self.assertAlmostEqual(thumb[1], result["y"], places=3)
 
+    def test_camera_joints_preserve_points_beyond_crop_without_changing_screen_points(self):
+        tracker = HandPointer(reach=0.1, smoothing=False)
+        source = hand("a", 0.02, 0.95)
+        result = tracker.update([source], 0, aspect_ratio=4 / 3)
+        skeleton = result["hands"][0]
+        self.assertEqual(len(skeleton["camera_points"]), 21)
+        self.assertLess(skeleton["points"][8][0], 0)
+        self.assertGreater(skeleton["points"][0][1], 1)
+        for landmark, camera_point in zip(source["landmarks"], skeleton["camera_points"]):
+            self.assertTrue(all(math.isfinite(value) for value in camera_point))
+            self.assertAlmostEqual(camera_point[0], landmark[0])
+            self.assertAlmostEqual(camera_point[1], landmark[1])
+
+    def test_camera_joints_share_skeleton_smoothing(self):
+        tracker = HandPointer(reach=0.1)
+        tracker.update([hand("a", 0.3, 0.4)], 0)
+        result = tracker.update([hand("a", 0.7, 0.6)], 33)
+        skeleton = result["hands"][0]
+        for screen_point, camera_point in zip(skeleton["points"], skeleton["camera_points"]):
+            expected = tracker._map.to_camera(screen_point[0] * SCREEN[0], screen_point[1] * SCREEN[1])
+            self.assertAlmostEqual(camera_point[0], expected[0], delta=0.00005)
+            self.assertAlmostEqual(camera_point[1], expected[1], delta=0.00005)
+        self.assertLess(skeleton["camera_points"][0][0], 0.7)
+
     def test_pinch_is_marked_on_the_skeleton(self):
         result = pointer().update([hand("a", 0.5, 0.5, pinch=True)], 0)
         self.assertTrue(result["hands"][0]["pinch"])
@@ -247,6 +314,7 @@ class SkeletonTests(unittest.TestCase):
         original = tracker.update([hand("a", 0.5, 0.5)], 0)
         held = tracker.update([], 33)
         self.assertEqual(held["hands"][0]["points"], original["hands"][0]["points"])
+        self.assertEqual(held["hands"][0]["camera_points"], original["hands"][0]["camera_points"])
         self.assertTrue(held["hands"][0]["predicted"])
         self.assertEqual(tracker.update([], 230)["hands"], [])
 
@@ -272,6 +340,16 @@ class UtilityTests(unittest.TestCase):
         x, y, w, h = screen_map.crop
         self.assertAlmostEqual(w / h, 4 / 3, places=2)
         self.assertLessEqual(h, 720 * 0.8 + 1)
+
+    def test_screen_map_camera_inverse_preserves_positions_inside_and_outside_crop(self):
+        for camera_size in ((1280, 720), (960, 720), (720, 1280)):
+            screen_map = ScreenMap(camera_size, SCREEN, margin=0.12)
+            for point in ((0.5, 0.5), (0, 0), (1, 1), (-0.1, 1.1)):
+                with self.subTest(camera_size=camera_size, point=point):
+                    actual = screen_map.to_camera(*screen_map.to_screen(*point))
+                    self.assertTrue(all(math.isfinite(value) for value in actual))
+                    self.assertAlmostEqual(actual[0], point[0])
+                    self.assertAlmostEqual(actual[1], point[1])
 
     def test_one_euro_smooths_jitter_and_follows_motion(self):
         steady = OneEuro()

@@ -15,6 +15,7 @@ import time
 
 from gestures import HandEngine
 from hand_pointer import HandPointer
+from projection import ProjectionDetector
 from tracker_motion import HandMotionBridge
 
 
@@ -312,9 +313,17 @@ def run(stop_event, publish, args):
         sequence, frame_sequence, inference_sequence, last_timestamp = 0, 0, 0, -1
         processing_width = getattr(args, "processing_width", 640)
         motion = HandMotionBridge(cv2, np, max_hands=max_hands)
+        projection = ProjectionDetector(cv2, np)
+
+        def infer_frame(model, frame, stamp):
+            # Border scans share the inference worker, never the capture/flow
+            # loop. A complex projected slide cannot stall pointer motion.
+            projection.update(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), stamp)
+            return detect_hands(cv2, mp, np, model, frame, stamp, None)[0]
+
         inference = LatestInference(
             lambda: vision.HandLandmarker.create_from_options(options),
-            lambda model, frame, stamp: detect_hands(cv2, mp, np, model, frame, stamp, None)[0],
+            infer_frame,
             stop_event, args.max_frame_age_ms)
         inference.start()
         capture = LatestFrameCapture(camera, stop_event)
@@ -365,6 +374,7 @@ def run(stop_event, publish, args):
                      "inference_fps": round(inference_rate, 1), "inference_ms": round(inference_ms, 1),
                      "frame_age_ms": round((now - capture_time) * 1000, 1),
                      "processing": {"width": frame.shape[1], "height": frame.shape[0]},
+                     "projection": projection.packet,
                      "propagated_hands": sum(h["tracking_source"] == "flow" for h in hands),
                      "skipped_inference_frames": inference.dropped,
                      "camera": camera_info.copy(), "pointer": pointer.update(hands, timestamp, width / height)})

@@ -75,8 +75,9 @@ WAVEBOARD_HANDS_PYTHON=/path/to/vision-env/bin/python bash scripts/start-ubuntu.
 WAVEBOARD_HANDS_ARGS="--camera /dev/video2" bash scripts/start-ubuntu.sh
 ```
 
-Point the camera toward the presenter at chest height, with even lighting and the
-whole hand in view. See [hand tracking](gesture-lab/README.md) for tuning.
+For projection alignment, place the camera beside the projector facing the screen,
+with the hands and all four projected corners visible. For manual hand control,
+the camera can face the presenter. See [hand tracking](gesture-lab/README.md) for tuning.
 
 Tracking now defaults to one teacher's hand and a 640-pixel processing width.
 The model runs separately from camera capture, while checked optical flow follows
@@ -121,7 +122,34 @@ instead. **3D** includes menu buttons for zooming without a mouse wheel.
 | Video player | Open local videos, play/pause, seek, mute/unmute, and use fullscreen. |
 | Presentations | Open PowerPoint or PDF files and navigate rendered slides. |
 
-Tap opens controls and items; press and hold exposes details where offered. Drawing and 3D orbiting use a held pointer while moving. With hand tracking, a pinch is the tap and a held pinch is the held pointer. There is no projector calibration: the camera view is mapped onto the screen with a fixed edge margin.
+Tap opens controls and items; press and hold exposes details where offered. Drawing and 3D orbiting use a held pointer while moving. With hand tracking, a pinch is the tap and a held pinch is the held pointer.
+
+### Hand mirroring and projection alignment
+
+**Settings → Mirror hands** reverses the skeleton, cursor, and horizontal gestures
+together. It is on by default for a camera facing the projection. Turn it off if
+your camera setup moves the overlay in the wrong direction.
+
+Enable **Settings → Align to projection borders** to show four black-and-white
+corner markers. The camera detects their identities and maps the hand positions
+to the projected area, correcting position, scale, perspective, and orientation.
+Wait for **Aligned to projection**; all four markers must be visible and steady
+across three scans. The markers remain visible to track movement of the setup.
+Automatic alignment determines orientation itself; the mirror switch applies to
+manual alignment. Preferences are saved locally, but calibration is measured
+again each session and after resizing. **Recheck corners** starts a fresh scan.
+
+Keep the camera close to the projector and hands close to the projection surface.
+This is alignment to a flat screen, not depth sensing: hands far in front of the
+screen can still appear offset. A camera aimed away from the projection cannot
+detect its borders. Good focus and contrast help; if the projected markers are
+too small in the camera image, move closer or try `--processing-width 960`.
+
+Briefly covered markers retain the last alignment for up to 2.5 seconds. If they
+stay hidden, the status changes and manual mapping resumes. A mapping change
+cancels any held pinch; open the hand before pinching again. Hands outside a
+calibrated projection cannot click its edges. Manual mapping uses the existing
+camera crop and `--reach` margin.
 
 The whiteboard stores its drawing in the app's local Qt profile using
 `localStorage`, with a bounded save size. Export a PNG to keep a separate copy.
@@ -152,6 +180,7 @@ python3 -m unittest discover -s tests -v
 (cd gesture-lab && python3 -m unittest discover -s tests -v)
 node tests/hand-input.test.mjs
 node tests/hand-rendering.test.mjs
+node tests/projection.test.mjs
 # With the desktop Qt Python environment and an active display:
 python3 tests/check_hand_ui.py
 python3 tests/check_desktop_actions.py

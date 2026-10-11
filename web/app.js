@@ -101,6 +101,12 @@ window.addEventListener("waveboard-tracking-stats", event => {
   trackingStats = event.detail;
   updateTrackingStats();
 });
+window.addEventListener("waveboard-alignment-status", () => updateAlignmentSettings());
+function updateAlignmentSettings() {
+  const settings = window.WaveBoardHands?.getSettings();
+  if ($("#projection-alignment-status")) $("#projection-alignment-status").textContent = settings?.status || "Waiting for hand controls";
+  if ($("#recheck-projection")) $("#recheck-projection").disabled = !settings?.enabled;
+}
 function updateTrackingStats() {
   const rate = value => Number.isFinite(value) ? `${value.toFixed(1)} fps` : "Waiting for camera";
   if ($("#hand-update-rate")) $("#hand-update-rate").textContent = rate(trackingStats?.tracking_fps);
@@ -1068,6 +1074,18 @@ $("#settings-button").onclick = async () => {
     `<label class="settings-row"><span>Extra contrast</span><input type="checkbox" id="contrast-setting" ${document.body.classList.contains("high-contrast") ? "checked" : ""}></label><div class="settings-row"><span>Hand updates</span><span id="hand-update-rate" class="status-badge"></span></div><div class="settings-row"><span>AI detection</span><span id="hand-detection-rate" class="status-badge"></span></div><div class="settings-row"><span>PowerPoint</span><span class="status-badge">${presentation?.available ? "Ready" : "Setup needed"}</span></div>${presentation?.available ? "" : '<p class="dialog-copy">On Ubuntu, install LibreOffice Impress and poppler-utils.</p>'}`,
   );
   updateTrackingStats();
+  const handSettings = window.WaveBoardHands?.getSettings();
+  $("#dialog-content").insertAdjacentHTML("beforeend", `
+    <label class="settings-row"><span>Mirror hands</span><input type="checkbox" id="mirror-hands" ${handSettings?.mirrored !== false ? "checked" : ""}></label>
+    <p class="dialog-copy">Reverses the hands and cursor together for manual alignment. Automatic alignment sets the direction when it finds the corners.</p>
+    <label class="settings-row"><span>Align to projection borders</span><input type="checkbox" id="align-projection" ${handSettings?.enabled ? "checked" : ""}></label>
+    <p class="dialog-copy">Place the camera beside the projector, facing the screen, with your hands and all four corner markers in view. Keep your hands near the screen surface for the closest match. If corners are lost, manual alignment resumes after a short hold.</p>
+    <p id="projection-alignment-status" class="dialog-copy" role="status"></p>
+    <div class="dialog-actions">${button("recheck-projection", "Recheck corners", "rotate", "secondary")}</div>`);
+  $("#mirror-hands").onchange = event => window.WaveBoardHands?.configure({ mirrored: event.target.checked });
+  $("#align-projection").onchange = event => window.WaveBoardHands?.configure({ enabled: event.target.checked });
+  $("#recheck-projection").onclick = () => window.WaveBoardHands?.realign();
+  updateAlignmentSettings();
   if (window.WaveBoardDesktop) {
     $("#dialog-content").insertAdjacentHTML("beforeend", `<div class="dialog-actions">${button("quit-app", "Close WaveBoard", "close", "secondary")}</div>`);
     $("#quit-app").onclick = () => {

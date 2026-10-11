@@ -55,6 +55,12 @@ class ScreenMap:
         x0, y0 = self.crop[:2]
         return ((nx * self.camera_size[0] - x0) * self.scale[0], (ny * self.camera_size[1] - y0) * self.scale[1])
 
+    def to_camera(self, x, y):
+        """Screen pixels -> mirrored camera coordinates, without cropping or clamping."""
+        x0, y0 = self.crop[:2]
+        return ((x / self.scale[0] + x0) / self.camera_size[0],
+                (y / self.scale[1] + y0) / self.camera_size[1])
+
 
 class OneEuro:
     """One Euro filter (Casiez et al., CHI 2012): steady at rest, little lag when moving fast."""
@@ -135,6 +141,7 @@ class HandPointer:
         self.down = False
         self.swipe_id = 0
         self.swipe_direction = 0
+        self._camera_swipe = None
         self._filter = None
         self._anchor = None
         self._map = None
@@ -283,12 +290,14 @@ class HandPointer:
                     or any(hand["pinches"].values()) or hand.get("reacquired", False):
                 detector.reset()
                 continue
-            swipe = detector.update(self._map.to_screen(*hand["palm"][:2]), timestamp,
+            point = self._map.to_screen(*hand["palm"][:2])
+            swipe = detector.update(point, timestamp,
                                     armed=timestamp - self._last_swipe >= self.swipe_cooldown_ms)
             if swipe:
                 self._last_swipe = timestamp
                 self.swipe_id += 1
                 self.swipe_direction = swipe[0]
+                self._camera_swipe = [list(self._map.to_camera(*endpoint)) for endpoint in (swipe[1], point)]
 
     def _update_skeletons(self, hands, timestamp):
         """All 21 joints of every hand, smoothed and mapped to the screen like the cursor."""
@@ -300,23 +309,31 @@ class HandPointer:
             filters = self._joint_filters.setdefault(hand["id"], [PointFilter(self.smoothing) for _ in range(21)])
             if hand["predicted"] and hand["id"] in previous:
                 points = previous[hand["id"]]["points"]
+                camera_points = previous[hand["id"]]["camera_points"]
             else:
                 filtered = [f(self._map.to_screen(p[0], p[1]), timestamp) for f, p in zip(filters, hand["landmarks"])]
                 points = [[round(x / SCREEN[0], 4), round(y / SCREEN[1], 4)] for x, y in filtered]
+                # Preserve the same filtering while exposing the entire camera
+                # image for projection calibration, including beyond the crop.
+                camera_points = [[round(value, 6) for value in self._map.to_camera(x, y)]
+                                 for x, y in filtered]
             self._skeletons.append({"id": hand["id"], "pinch": bool(hand["pinches"]["index"]),
                                     "observed": hand["observed"], "predicted": hand["predicted"],
                                     "motion_tracked": hand["motion_tracked"],
                                     "tracking_age_ms": hand["tracking_age_ms"],
-                                    "points": points})
+                                    "points": points, "camera_points": camera_points})
 
     def _packet(self, point):
-        packet = {"visible": point is not None, "x": None, "y": None, "down": self.down, "hand": self.primary,
+        packet = {"visible": point is not None, "x": None, "y": None,
+                  "camera_x": None, "camera_y": None, "down": self.down, "hand": self.primary,
                   "swipe_id": self.swipe_id, "swipe": self.swipe_direction,
+                  "camera_swipe": self._camera_swipe,
                   "observed": False, "predicted": False, "motion_tracked": False,
                   "tracking_age_ms": 0, "tracking_source": "lost", "cancelled": self._cancelled,
                   **self._tracking,
                   "hands": [{**skeleton, "primary": skeleton["id"] == self.primary} for skeleton in self._skeletons]}
         if point is not None:
+            packet["camera_x"], packet["camera_y"] = self._map.to_camera(*point)
             packet["x"] = min(max(point[0] / SCREEN[0], 0.0), 1.0)
             packet["y"] = min(max(point[1] / SCREEN[1], 0.0), 1.0)
         return packet

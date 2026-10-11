@@ -4,7 +4,7 @@ The camera half of WaveBoard. MediaPipe tracks one teacher's hand by default,
 with an option for two hands. The WaveBoard workspace (the local desktop interface
 at the repository root) draws skeletons and takes your pinches as touches.
 The camera image never leaves this process, and nothing is recorded or uploaded:
-only hand positions go to the local page.
+only hand positions and detected projection-marker coordinates go to the local page.
 
 ```text
 webcam -> latest frame -> checked palm motion -> process pipe -> Qt -> workspace
@@ -56,6 +56,37 @@ into the folder currently shown. **Save** writes a PNG directly to
 3D zoom; **Settings → Close WaveBoard** closes the app after an on-screen
 confirmation. No operating-system file dialog is required during these flows.
 
+## Align hands to the projection
+
+**Settings → Mirror hands** is enabled by default. The tracker internally uses
+mirrored camera images; the workspace reverses its manual mapping for a camera
+beside the projector facing the screen. The skeleton, cursor, and swipes share
+that direction. Turn the switch off for a setup that needs the opposite direction.
+
+Enable **Settings → Align to projection borders** to display four distinct corner
+markers. Keep the camera beside the projector with both the hands and the entire
+projected screen in view. Three steady detections establish a perspective mapping
+from camera coordinates to the projection; status then reads **Aligned to
+projection**. The markers stay visible so the mapping can adjust if the setup moves.
+Calibration sets orientation automatically and bypasses the manual crop/mirror.
+Keep hands near the screen: this flat-surface mapping cannot correct hand depth
+or parallax away from the projection plane.
+
+`projection.py` uses the existing OpenCV and NumPy packages, with no extra runtime
+dependencies. It detects four 6×6 binary markers with white quiet zones, accepts
+rotated and reflected views, and rejects ambiguous duplicate IDs. Scanning runs
+at most twice per second in the inference worker, separate from the capture and
+pointer loop. Frame packets include marker centers and the actual scan timestamp;
+repeated packets cannot count as new calibration evidence. Raw camera coordinates
+are also included for the cursor, every skeleton joint, and swipe endpoints.
+
+If markers are briefly hidden, the previous alignment holds for up to 2.5 seconds.
+After that, the workspace reports manual alignment and cancels a held gesture.
+Show an open hand before pressing again. Resizing, camera resolution changes, and
+**Recheck corners** clear the mapping. Calibration is not saved between sessions.
+If detection cannot find all corners, improve focus/contrast, move the camera
+closer, or use `--processing-width 960` so markers occupy enough camera pixels.
+
 ## Tracking speed and accuracy
 
 Camera capture, AI landmark inference, and pointer updates run at different
@@ -86,8 +117,9 @@ a new pinch, a release, or a swipe. A press that cannot safely continue is
 cancelled, so losing a hand cannot turn into a button click. Show an open hand
 before pinching again after a prolonged loss.
 
-- **Camera position:** face the presenter from below or beside the projected image, at
-  about chest height, with the whole hand in view at your working distance.
+- **Camera position:** for projection alignment, face the screen from beside the
+  projector and keep all four corner markers visible. For manual control, face
+  the presenter with the whole hand in view at your working distance.
 - **Light:** even light on the hands from the front. Avoid standing in front of a window
   or a bright projection; a plain background helps.
 - **Image size:** the default capture request is 1280×720 at 30 FPS. Frames are
@@ -165,6 +197,7 @@ Find the camera with `v4l2-ctl --list-devices` (`sudo apt install v4l-utils`).
 - `tracker_motion.py`: checked sparse optical flow, delayed-result alignment, and bounded motion retention.
 - `gestures.py`: finger extension, pinch detection with hysteresis, and stable hand ids.
 - `hand_pointer.py`: screen mapping, smoothing, the touch pointer, swipes, and skeleton points.
+- `projection.py`: camera detection of the four projection border markers.
 - `server.py`: legacy WebSocket adapter, unused by the desktop app.
 - `tests/fixtures/mediapipe_sample_hands.json`: real MediaPipe landmarks used in tests.
 

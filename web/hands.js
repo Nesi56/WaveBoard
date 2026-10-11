@@ -7,6 +7,15 @@
 // screen, and an open-palm swipe acts as the left / right arrow keys (Home cards,
 // slides). Without the tracker this module stays idle and quietly retries.
 
+import { ProjectionMap, MARKER_CENTERS, markerSVG } from "./projection.js";
+
+let handPreferences = {};
+try { handPreferences = JSON.parse(localStorage.getItem("waveboard-hand-alignment") || "{}"); } catch {}
+const projection = new ProjectionMap({
+  mirrored: handPreferences?.mirrored !== false,
+  enabled: handPreferences?.enabled === true,
+});
+
 const params = new URLSearchParams(location.search);
 const PORT = Number(params.get("hands-port")) || 8766;
 const STALE_MS = 500;
@@ -37,7 +46,15 @@ style.textContent = `
   transition: background 0.08s;
 }
 .hand-cursor[data-down="true"] { background: var(--deep, ${DEEP}); }
-.hand-cursor[data-tracking="recovering"] { opacity: 0.55; border-style: dashed; }`;
+.hand-cursor[data-tracking="recovering"] { opacity: 0.55; border-style: dashed; }
+.projection-marker { position: absolute; width: min(10vw, 14vh); height: min(10vw, 14vh); transform: translate(-50%, -50%); }
+.projection-marker svg { display: block; width: 100%; height: 100%; }
+body[data-projection-alignment="true"] #main { width: 76%; margin-inline: 12%; }
+body[data-projection-alignment="true"][data-page="home"] .menu-toggle { right: 12%; }
+body[data-projection-alignment="true"] dialog,
+body[data-projection-alignment="true"] .workspace-menu { max-width: min(650px, 76vw); }
+.projection-status { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); max-width: 75vw;
+  padding: 6px 14px; border-radius: 12px; color: ${DEEP}; background: ${PAPER}; font: 14px/1.4 sans-serif; text-align: center; }`;
 document.head.append(style);
 const layer = document.createElement("div");
 layer.className = "hand-layer";
@@ -47,7 +64,12 @@ canvas.className = "hand-skeletons";
 const cursor = document.createElement("div");
 cursor.className = "hand-cursor";
 cursor.hidden = true;
-layer.append(canvas, cursor);
+const markers = document.createElement("div");
+markers.innerHTML = MARKER_CENTERS.map(([x, y], id) =>
+  `<div class="projection-marker" style="left:${x * 100}%;top:${y * 100}%">${markerSVG(id)}</div>`).join("");
+const projectionStatus = document.createElement("div");
+projectionStatus.className = "projection-status";
+layer.append(canvas, markers, projectionStatus, cursor);
 document.body.append(layer);
 const ctx = canvas.getContext("2d");
 
@@ -66,6 +88,38 @@ let lastFrameAt = 0;
 const targets = new Map(); // hand id -> { points (CSS px), primary, pinch }
 const shown = new Map();   // hand id -> points currently drawn
 let painting = false;
+let mappingRevision = projection.revision;
+let cameraGeometry = null;
+let lastProjectionStatus = null;
+
+function alignmentStatus() {
+  document.body.dataset.projectionAlignment = String(projection.enabled);
+  markers.hidden = projectionStatus.hidden = !projection.enabled;
+  projectionStatus.textContent = projection.status;
+  if (lastProjectionStatus !== projection.status) {
+    lastProjectionStatus = projection.status;
+    window.dispatchEvent(new CustomEvent("waveboard-alignment-status", { detail: projection.status }));
+  }
+}
+function mappingChanged() {
+  if (mappingRevision === projection.revision) return;
+  mappingRevision = projection.revision;
+  // A mapping change must never bend a held stroke or release onto a new button.
+  hide();
+  shown.clear();
+}
+window.WaveBoardHands = Object.freeze({
+  getSettings: () => ({ mirrored: projection.mirrored, enabled: projection.enabled, status: projection.status }),
+  configure(options) {
+    projection.configure(options);
+    mappingChanged();
+    alignmentStatus();
+    placeLayer();
+    try { localStorage.setItem("waveboard-hand-alignment", JSON.stringify({ mirrored: projection.mirrored, enabled: projection.enabled })); } catch {}
+  },
+  realign() { projection.reset(); mappingChanged(); alignmentStatus(); },
+});
+alignmentStatus();
 
 const input = (packet) =>
   window.WaveBoardInput?.pointer({ ...packet, pointerId: HAND_POINTER_ID, isPrimary: true }) === true;
@@ -77,13 +131,17 @@ function release(type) {
   pendingMove = false;
 }
 
-function hide() {
+function hideCursor() {
   release("cancel");
   cursor.hidden = true;
   cursorTarget = null;
   motionAllowed = false;
   armed = false;
   window.WaveBoardInput?.suspend();
+}
+
+function hide() {
+  hideCursor();
   targets.clear();
   paintSoon();
 }
@@ -125,26 +183,41 @@ function apply(pointer) {
     release("cancel");
     armed = false;
   }
-  if (observed && !pointer.cancelled && pointer.swipe_id !== lastSwipe) {
-    if (lastSwipe !== null && pointer.swipe) arrowKey(pointer.swipe < 0 ? "ArrowRight" : "ArrowLeft");
-    lastSwipe = pointer.swipe_id;
-  }
+  const newSwipe = observed && !pointer.cancelled && pointer.swipe_id !== lastSwipe;
+  const canSwipe = newSwipe && lastSwipe !== null;
+  // Consume even suppressed swipes so they cannot replay on re-entry.
+  if (newSwipe) lastSwipe = pointer.swipe_id;
   if (!pointer.visible || document.hidden) return hide();
+  const mapped = projection.point(pointer.x, pointer.y, pointer.camera_x, pointer.camera_y);
   placeLayer();
   targets.clear();
   for (const hand of pointer.hands || []) {
+    const points = hand.points.map(([x, y], i) => projection.point(x, y, ...(hand.camera_points?.[i] || [])));
+    if (points.some(p => !p || p.some(value => Math.abs(value) > 8))) continue;
+    if (projection.calibrated && [0, 1].some(axis => points.every(p => p[axis] < 0) || points.every(p => p[axis] > 1))) continue;
     targets.set(hand.id, {
-      points: hand.points.map(([x, y]) => [x * window.innerWidth, y * window.innerHeight]),
+      points: points.map(([x, y]) => [x * window.innerWidth, y * window.innerHeight]),
       primary: hand.primary, pinch: hand.pinch, predicted: hand.predicted,
     });
+  }
+  // Outside the actual projection is outside the workspace, not an edge click.
+  // The other hand can still be visible inside it.
+  if (!mapped || (projection.calibrated && mapped.some(value => value < 0 || value > 1))) {
+    hideCursor();
+    paintSoon();
+    return;
+  }
+  if (canSwipe) {
+    const direction = projection.swipe(pointer);
+    if (direction) arrowKey(direction < 0 ? "ArrowRight" : "ArrowLeft");
   }
   if (pressed && pointer.hand !== pressHand) {
     release("cancel");
     armed = false;
   }
   cursorTarget = {
-    x: Math.min(Math.max(pointer.x * window.innerWidth, 0), window.innerWidth - 1),
-    y: Math.min(Math.max(pointer.y * window.innerHeight, 0), window.innerHeight - 1),
+    x: Math.min(Math.max(mapped[0] * window.innerWidth, 0), window.innerWidth - 1),
+    y: Math.min(Math.max(mapped[1] * window.innerHeight, 0), window.innerHeight - 1),
   };
   if (cursor.hidden) last = { ...cursorTarget };
   cursor.hidden = false;
@@ -278,12 +351,20 @@ function validPointer(pointer) {
     (!pointer.visible || (Number.isFinite(pointer.x) && Number.isFinite(pointer.y))) &&
     (pointer.hands === undefined || (Array.isArray(pointer.hands) && pointer.hands.length <= 2 &&
       pointer.hands.every((hand) => typeof hand.id === "string" && Array.isArray(hand.points) &&
-        hand.points.length === 21 && hand.points.every(finitePair))));
+        hand.points.length === 21 && hand.points.every(finitePair) &&
+        (hand.camera_points === undefined || (Array.isArray(hand.camera_points) &&
+          hand.camera_points.length === 21 && hand.camera_points.every(finitePair))))));
 }
 
 let lastStatsAt = 0;
 function trackingFrame(data) {
   if (!validPointer(data.pointer)) return;
+  const geometry = data.camera ? `${data.camera.width}:${data.camera.height}` : null;
+  if (cameraGeometry && geometry && cameraGeometry !== geometry) projection.reset();
+  cameraGeometry = geometry;
+  projection.update(data.projection, performance.now(), data.timestamp);
+  mappingChanged();
+  alignmentStatus();
   apply(data.pointer);
   if (performance.now() - lastStatsAt > 500) {
     lastStatsAt = performance.now();
@@ -314,6 +395,8 @@ function connect() {
   });
   socket.addEventListener("close", () => {
     hide();
+    projection.reset();
+    alignmentStatus();
     lastSwipe = null;
     setTimeout(connect, RETRY_MS);
   });
@@ -322,9 +405,15 @@ function connect() {
 // The tracker only sends while it sees frames; treat silence as a lost hand.
 setInterval(() => {
   if ((!cursor.hidden || targets.size) && performance.now() - lastFrameAt > STALE_MS) hide();
+  projection.expire(performance.now());
+  mappingChanged();
+  alignmentStatus();
+  if (projection.enabled) placeLayer();
 }, 200);
-document.addEventListener("visibilitychange", () => document.hidden && hide());
-window.addEventListener("resize", paintSoon);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { projection.reset(); mappingChanged(); hide(); }
+});
+window.addEventListener("resize", () => { projection.reset(); mappingChanged(); alignmentStatus(); paintSoon(); });
 if (window.WaveBoardDesktop) {
   window.WaveBoardNative.then(bridge => {
     bridge.hands.connect(encoded => {
@@ -333,6 +422,8 @@ if (window.WaveBoardDesktop) {
       if (data?.type === "frame") trackingFrame(data);
       else if (data?.type === "status" && data.level === "error") {
         hide();
+        projection.reset();
+        alignmentStatus();
         window.dispatchEvent(new CustomEvent("waveboard-tracker-error", { detail: data.message }));
       }
     });
