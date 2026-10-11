@@ -6,24 +6,27 @@ const source = (await readFile(new URL('../web/hands.js', import.meta.url), 'utf
 const mapping = await import(`data:text/javascript;base64,${Buffer.from(await readFile(new URL('../web/projection.js', import.meta.url), 'utf8')).toString('base64')}`);
 async function trackerFixture(preferences = { mirrored: false }) {
   let now = 1000, receive;
+  let saved = preferences;
   const frames = [], intervals = [], inputs = [], elements = [], arcs = [], keys = [], listeners = {};
   const context2d = new Proxy({}, { get: (_, key) => (...args) => { if (key === 'arc') arcs.push(args); } });
   const element = tag => {
-    const el = { tag, style: {}, dataset: {}, hidden: false, parentElement: null,
+    const el = { tag, style: {}, dataset: {}, hidden: false, parentElement: null, open: false,
       setAttribute() {}, append(...children) { for (const child of children) child.parentElement = this; },
+      addEventListener() {}, showModal() { this.open = true; }, close() { this.open = false; }, remove() { this.parentElement = null; },
       getContext: () => context2d };
     elements.push(el);
     return el;
   };
   const doc = { head: element('head'), body: element('body'), hidden: false, fullscreenElement: null,
-    createElement: element, querySelector: () => null, addEventListener() {}, dispatchEvent(event) { keys.push(event.key); } };
+    createElement: element, querySelector: selector => selector.startsWith('dialog') ? elements.find(el => el.tag === 'dialog' && el.open) || null : null,
+    addEventListener() {}, dispatchEvent(event) { keys.push(event.key); } };
   const win = { innerWidth: 1000, innerHeight: 600, devicePixelRatio: 1,
     WaveBoardDesktop: true,
     WaveBoardNative: Promise.resolve({ hands: { connect(callback) { receive = callback; } }, startHands() {} }),
     WaveBoardInput: { pointer(event) { inputs.push(event); return true; }, hover() {}, suspend() {} },
     addEventListener(type, callback) { listeners[type] = callback; }, dispatchEvent() {} };
   vm.runInNewContext(source, { document: doc, window: win, location: { search: '' }, URLSearchParams,
-    ...mapping, localStorage: { getItem: () => JSON.stringify(preferences), setItem() {} },
+    ...mapping, localStorage: { getItem: () => JSON.stringify(preferences), setItem(key, value) { saved = JSON.parse(value); } },
     performance: { now: () => now }, requestAnimationFrame: cb => frames.push(cb),
     setInterval: cb => intervals.push(cb), setTimeout() {},
     CustomEvent: class {}, KeyboardEvent: class { constructor(type, data) { Object.assign(this, data); } }, console });
@@ -33,7 +36,7 @@ async function trackerFixture(preferences = { mirrored: false }) {
   } }));
   const tick = (milliseconds = 16) => { now += milliseconds; const pending = frames.splice(0); pending.forEach(cb => cb(now)); };
   const cursor = elements.find(el => el.className === 'hand-cursor');
-  return { emit, tick, inputs, cursor, arcs, keys, listeners, controls: win.WaveBoardHands,
+  return { emit, tick, inputs, cursor, arcs, keys, listeners, elements, controls: win.WaveBoardHands, saved: () => saved,
     expire(ms = 600) { now += ms; intervals.forEach(cb => cb()); } };
 }
 test('cursor eases between inference frames at display cadence', async () => {
@@ -174,4 +177,68 @@ test('outside primary cannot swipe or hide an inside secondary skeleton', async 
   f.emit({ camera_x: 0.2, camera_y: 0.4, swipe_id: 1, swipe: 1,
     camera_swipe: [[0.1, 0.4], [0.2, 0.4]] });
   assert.deepEqual(f.keys, [], 'suppressed swipe cannot replay after re-entry');
+});
+
+function fingertipPacket(point, down) {
+  return { down, observed: true, camera_x: 0.01, camera_y: 0.01, hands: [{
+    id: 'right', primary: true, observed: true, pinch: down,
+    points: Array.from({ length: 21 }, () => [0.01, 0.01]),
+    camera_points: Array.from({ length: 21 }, () => point),
+  }] };
+}
+const handCamera = ([x, y]) => [0.15 + 1.1 * (x - 0.15), y];
+function fitHand(f) {
+  let timestamp = 1000;
+  f.controls.startCalibration();
+  for (const point of mapping.HAND_TARGETS) {
+    f.emit(fingertipPacket(handCamera(point), false), { timestamp });
+    for (const offset of [100, 300, 500, 700]) {
+      f.tick(200);
+      f.emit(fingertipPacket(handCamera(point), true), { timestamp: timestamp + offset });
+    }
+    timestamp += 800;
+  }
+}
+
+test('guided fit consumes pinches, persists map, and uses the calibrated fingertip for input and skeleton', async () => {
+  const f = await trackerFixture();
+  fitHand(f);
+  assert.equal(f.controls.getSettings().handCalibrated, true);
+  assert.equal(f.inputs.length, 0, 'target captures cannot click workspace');
+  assert.equal(f.elements.some(el => el.tag === 'dialog' && el.open), false);
+  assert.equal(f.saved().calibration.source.length, 4);
+  // The last capture is still pinched. Require a release before normal input.
+  f.emit(fingertipPacket(handCamera([0.85, 0.5]), true));
+  assert.equal(f.inputs.length, 0);
+  f.emit(fingertipPacket(handCamera([0.85, 0.5]), false)); f.tick();
+  f.emit(fingertipPacket(handCamera([0.85, 0.5]), true)); f.tick();
+  assert.ok(Math.abs(f.inputs.find(e => e.type === 'down').x - 850) < 1e-6);
+  assert.ok(Math.abs(f.arcs.at(-1)[0] - 850) < 1e-6);
+  const restored = await trackerFixture(f.saved());
+  assert.equal(restored.controls.getSettings().handCalibrated, true);
+  restored.listeners.resize();
+  assert.equal(restored.controls.getSettings().handCalibrated, false);
+  assert.equal(restored.saved().calibration, null);
+});
+
+test('cancelled calibration keeps prior fit and camera geometry changes invalidate it', async () => {
+  const f = await trackerFixture();
+  fitHand(f);
+  f.controls.startCalibration();
+  f.elements.find(el => el.className === 'button secondary calibration-cancel' && el.parentElement.open).onclick();
+  assert.equal(f.controls.getSettings().handCalibrated, true);
+  f.emit(fingertipPacket(handCamera([0.5, 0.5]), false), { camera: { width: 1280, height: 720 } });
+  f.emit(fingertipPacket(handCamera([0.5, 0.5]), false), { camera: { width: 640, height: 480 } });
+  assert.equal(f.controls.getSettings().handCalibrated, false);
+  assert.equal(f.saved().calibration, null);
+});
+
+test('open-hand swipes during calibration never replay into the workspace', async () => {
+  const f = await trackerFixture();
+  f.emit({ swipe_id: 0 });
+  f.controls.startCalibration();
+  f.emit({ ...fingertipPacket([0.2, 0.2], false), swipe_id: 1, swipe: 1 }, { timestamp: 1000 });
+  f.elements.find(el => el.className === 'button secondary calibration-cancel' && el.parentElement.open).onclick();
+  f.emit({ swipe_id: 1, swipe: 1 });
+  assert.deepEqual(f.keys, []);
 });

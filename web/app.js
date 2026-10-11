@@ -105,8 +105,10 @@ window.addEventListener("waveboard-alignment-status", () => updateAlignmentSetti
 function updateAlignmentSettings() {
   const settings = window.WaveBoardHands?.getSettings();
   if ($("#projection-alignment-status")) $("#projection-alignment-status").textContent = settings?.status || "Waiting for hand controls";
-  if ($("#recheck-projection")) $("#recheck-projection").disabled = !settings?.enabled;
+  if ($("#recheck-projection")) $("#recheck-projection").disabled = !settings?.enabled || settings?.handCalibrated;
+  if ($("#reset-hand-calibration")) $("#reset-hand-calibration").disabled = !settings?.handCalibrated;
 }
+window.addEventListener("waveboard-calibration-complete", () => toast("Hands aligned. Open your hand, then point and pinch."));
 function updateTrackingStats() {
   const rate = value => Number.isFinite(value) ? `${value.toFixed(1)} fps` : "Waiting for camera";
   if ($("#hand-update-rate")) $("#hand-update-rate").textContent = rate(trackingStats?.tracking_fps);
@@ -1064,24 +1066,37 @@ $("#help-button").onclick = () =>
     "Simple by design",
     `<div class="dialog-copy"><p><strong>Hands:</strong> Move your index finger to point. Pinch thumb and index, then release to select. The highlighted control shows your target. Keep pinching and move up or down to scroll lists. Pinch and drag the video bar to seek.</p><p><strong>Home:</strong> Use the arrows. Tap a card to open it.</p><p><strong>Draw:</strong> Pick a color and dot size on the left. Drag to draw.</p><p><strong>Top tab:</strong> Open tools, save, or go Home.</p><p><strong>Files:</strong> Pinch to open. Use the three-dot button for details.</p><p><strong>3D:</strong> Pinch and drag to rotate. Use Zoom in and Zoom out in the menu.</p></div>`,
   );
+function alignHands() {
+  closeMenu();
+  $("#dialog").close();
+  if (window.WaveBoardHands) window.WaveBoardHands.startCalibration();
+  else toast("Hand controls are still loading. Try again.");
+}
+$("#calibrate-hands-button").onclick = alignHands;
 $("#settings-button").onclick = async () => {
   try {
     await refreshRoots();
   } catch {}
   const presentation = state.status?.presentation;
+  const handSettings = window.WaveBoardHands?.getSettings();
   modal(
     "Settings",
-    `<label class="settings-row"><span>Extra contrast</span><input type="checkbox" id="contrast-setting" ${document.body.classList.contains("high-contrast") ? "checked" : ""}></label><div class="settings-row"><span>Hand updates</span><span id="hand-update-rate" class="status-badge"></span></div><div class="settings-row"><span>AI detection</span><span id="hand-detection-rate" class="status-badge"></span></div><div class="settings-row"><span>PowerPoint</span><span class="status-badge">${presentation?.available ? "Ready" : "Setup needed"}</span></div>${presentation?.available ? "" : '<p class="dialog-copy">On Ubuntu, install LibreOffice Impress and poppler-utils.</p>'}`,
+    `<div class="dialog-actions">${button("align-hands", "Align hands", "touch")}${button("reset-hand-calibration", "Reset alignment", "rotate", "secondary")}</div>
+    <p class="dialog-copy">Match your index fingertip to 5 targets. Stay at your usual distance from the screen.</p>
+    <p id="projection-alignment-status" class="dialog-copy" role="status"></p>
+    <label class="settings-row"><span>Mirror hands</span><input type="checkbox" id="mirror-hands" ${handSettings?.mirrored !== false ? "checked" : ""}></label>
+    <p class="dialog-copy">For use before calibration. Align hands sets the direction and scale.</p>
+    <label class="settings-row"><span>Screen corner markers</span><input type="checkbox" id="align-projection" ${handSettings?.enabled ? "checked" : ""}></label>
+    <p class="dialog-copy">Optional for hands at the screen surface. For hands in the air, use Align hands.</p>
+    <div class="dialog-actions">${button("recheck-projection", "Recheck corners", "rotate", "secondary")}</div>
+    <label class="settings-row"><span>Extra contrast</span><input type="checkbox" id="contrast-setting" ${document.body.classList.contains("high-contrast") ? "checked" : ""}></label>
+    <div class="settings-row"><span>Hand updates</span><span id="hand-update-rate" class="status-badge"></span></div>
+    <div class="settings-row"><span>AI detection</span><span id="hand-detection-rate" class="status-badge"></span></div>
+    <div class="settings-row"><span>PowerPoint</span><span class="status-badge">${presentation?.available ? "Ready" : "Setup needed"}</span></div>${presentation?.available ? "" : '<p class="dialog-copy">On Ubuntu, install LibreOffice Impress and poppler-utils.</p>'}`,
   );
   updateTrackingStats();
-  const handSettings = window.WaveBoardHands?.getSettings();
-  $("#dialog-content").insertAdjacentHTML("beforeend", `
-    <label class="settings-row"><span>Mirror hands</span><input type="checkbox" id="mirror-hands" ${handSettings?.mirrored !== false ? "checked" : ""}></label>
-    <p class="dialog-copy">Reverses the hands and cursor together for manual alignment. Automatic alignment sets the direction when it finds the corners.</p>
-    <label class="settings-row"><span>Align to projection borders</span><input type="checkbox" id="align-projection" ${handSettings?.enabled ? "checked" : ""}></label>
-    <p class="dialog-copy">Place the camera beside the projector, facing the screen, with your hands and all four corner markers in view. Keep your hands near the screen surface for the closest match. If corners are lost, manual alignment resumes after a short hold.</p>
-    <p id="projection-alignment-status" class="dialog-copy" role="status"></p>
-    <div class="dialog-actions">${button("recheck-projection", "Recheck corners", "rotate", "secondary")}</div>`);
+  $("#align-hands").onclick = alignHands;
+  $("#reset-hand-calibration").onclick = () => { window.WaveBoardHands?.clearCalibration(); updateAlignmentSettings(); };
   $("#mirror-hands").onchange = event => window.WaveBoardHands?.configure({ mirrored: event.target.checked });
   $("#align-projection").onchange = event => window.WaveBoardHands?.configure({ enabled: event.target.checked });
   $("#recheck-projection").onclick = () => window.WaveBoardHands?.realign();

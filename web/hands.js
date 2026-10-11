@@ -7,7 +7,7 @@
 // screen, and an open-palm swipe acts as the left / right arrow keys (Home cards,
 // slides). Without the tracker this module stays idle and quietly retries.
 
-import { ProjectionMap, MARKER_CENTERS, markerSVG } from "./projection.js";
+import { ProjectionMap, HandCalibration, HAND_TARGETS, MARKER_CENTERS, markerSVG } from "./projection.js";
 
 let handPreferences = {};
 try { handPreferences = JSON.parse(localStorage.getItem("waveboard-hand-alignment") || "{}"); } catch {}
@@ -15,6 +15,9 @@ const projection = new ProjectionMap({
   mirrored: handPreferences?.mirrored !== false,
   enabled: handPreferences?.enabled === true,
 });
+const savedCalibration = handPreferences?.calibration;
+if (savedCalibration?.width === window.innerWidth && savedCalibration?.height === window.innerHeight)
+  projection.setHandCalibration(savedCalibration.source, savedCalibration.target);
 
 const params = new URLSearchParams(location.search);
 const PORT = Number(params.get("hands-port")) || 8766;
@@ -49,12 +52,23 @@ style.textContent = `
 .hand-cursor[data-tracking="recovering"] { opacity: 0.55; border-style: dashed; }
 .projection-marker { position: absolute; width: min(10vw, 14vh); height: min(10vw, 14vh); transform: translate(-50%, -50%); }
 .projection-marker svg { display: block; width: 100%; height: 100%; }
-body[data-projection-alignment="true"] #main { width: 76%; margin-inline: 12%; }
 body[data-projection-alignment="true"][data-page="home"] .menu-toggle { right: 12%; }
-body[data-projection-alignment="true"] dialog,
-body[data-projection-alignment="true"] .workspace-menu { max-width: min(650px, 76vw); }
 .projection-status { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); max-width: 75vw;
-  padding: 6px 14px; border-radius: 12px; color: ${DEEP}; background: ${PAPER}; font: 14px/1.4 sans-serif; text-align: center; }`;
+  padding: 6px 14px; border-radius: 12px; color: ${DEEP}; background: ${PAPER}; font: 26px/1.2 sans-serif; text-align: center; }
+dialog.hand-calibration { position: fixed; inset: 0; width: 100vw; height: 100vh; max-width: none; max-height: none;
+  margin: 0; padding: 0; border: 0; border-radius: 0; background: ${PAPER}; color: ${DEEP}; overflow: hidden; }
+.hand-calibration h2 { position: absolute; top: 16px; left: 20px; right: 140px; margin: 0; font: bold 30px/1.2 sans-serif; }
+.calibration-cancel { position: absolute; top: 12px; right: 12px; min-height: 60px; font-size: 26px; }
+.calibration-target { position: absolute; width: 72px; height: 72px; margin: -36px 0 0 -36px;
+  border: 5px solid ${DEEP}; border-radius: 50%; box-shadow: 0 0 0 7px #bed1ab; background: white; }
+.calibration-target::before, .calibration-target::after { content: ''; position: absolute; background: ${DEEP}; }
+.calibration-target::before { width: 4px; height: 20px; left: calc(50% - 2px); top: calc(50% - 10px); }
+.calibration-target::after { height: 4px; width: 20px; top: calc(50% - 2px); left: calc(50% - 10px); }
+.calibration-help { position: absolute; top: 32%; left: 23%; right: 23%; margin: 0; text-align: center; font: 600 26px/1.25 sans-serif; }
+.hand-calibration[data-step="4"] .calibration-help { top: 82px; left: 15%; right: 15%; }
+.calibration-progress { position: absolute; left: 25%; width: 50%; bottom: 28px; height: 22px; accent-color: ${DEEP}; }
+.calibration-retry { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); font-size: 28px; }
+.hand-calibration[data-error="true"] .calibration-help { top: 28%; left: 12%; right: 12%; }`;
 document.head.append(style);
 const layer = document.createElement("div");
 layer.className = "hand-layer";
@@ -89,12 +103,25 @@ const targets = new Map(); // hand id -> { points (CSS px), primary, pinch }
 const shown = new Map();   // hand id -> points currently drawn
 let painting = false;
 let mappingRevision = projection.revision;
-let cameraGeometry = null;
+let cameraGeometry = projection.handCalibration ? savedCalibration?.camera || null : null;
 let lastProjectionStatus = null;
+let calibrationSession = null;
+
+function savePreferences() {
+  const calibration = projection.handCalibration ? { ...projection.handCalibration,
+    width: window.innerWidth, height: window.innerHeight, camera: cameraGeometry } : null;
+  try { localStorage.setItem("waveboard-hand-alignment", JSON.stringify({
+    mirrored: projection.mirrored, enabled: projection.enabled, calibration,
+  })); } catch {}
+}
 
 function alignmentStatus() {
-  document.body.dataset.projectionAlignment = String(projection.enabled);
-  markers.hidden = projectionStatus.hidden = !projection.enabled;
+  const borders = projection.enabled && !projection.handCalibration && !calibrationSession;
+  const menu = document.querySelector('#workspace-menu');
+  const covered = Boolean(openModal() || (menu && !menu.hidden));
+  projection.setBordersPaused(covered || Boolean(calibrationSession), performance.now());
+  document.body.dataset.projectionAlignment = String(borders);
+  markers.hidden = projectionStatus.hidden = !borders || covered;
   projectionStatus.textContent = projection.status;
   if (lastProjectionStatus !== projection.status) {
     lastProjectionStatus = projection.status;
@@ -109,15 +136,18 @@ function mappingChanged() {
   shown.clear();
 }
 window.WaveBoardHands = Object.freeze({
-  getSettings: () => ({ mirrored: projection.mirrored, enabled: projection.enabled, status: projection.status }),
+  getSettings: () => ({ mirrored: projection.mirrored, enabled: projection.enabled, status: projection.status,
+    handCalibrated: Boolean(projection.handCalibration) }),
   configure(options) {
     projection.configure(options);
     mappingChanged();
     alignmentStatus();
     placeLayer();
-    try { localStorage.setItem("waveboard-hand-alignment", JSON.stringify({ mirrored: projection.mirrored, enabled: projection.enabled })); } catch {}
+    savePreferences();
   },
   realign() { projection.reset(); mappingChanged(); alignmentStatus(); },
+  startCalibration,
+  clearCalibration() { projection.clearHandCalibration(); mappingChanged(); alignmentStatus(); savePreferences(); },
 });
 alignmentStatus();
 
@@ -165,6 +195,99 @@ function placeLayer() {
   if (layer.parentElement !== host) host.append(layer);
 }
 
+function calibrationView() {
+  const session = calibrationSession;
+  if (!session) return;
+  const fit = session.fit;
+  session.dialog.dataset.step = String(fit.index);
+  session.dialog.dataset.error = String(Boolean(fit.error));
+  session.title.textContent = fit.error ? 'Try the targets again' : `Match your hand · ${fit.index + 1} of 5`;
+  session.help.textContent = fit.error ? `${fit.error} Open, then pinch to retry.` : fit.message;
+  session.retry.hidden = !fit.error;
+  session.progress.hidden = Boolean(fit.error);
+  session.progress.value = fit.progress;
+  session.target.hidden = Boolean(fit.error);
+  const target = HAND_TARGETS[Math.min(fit.index, 4)];
+  session.target.style.left = `${target[0] * 100}%`;
+  session.target.style.top = `${target[1] * 100}%`;
+}
+
+function finishCalibration() {
+  if (!calibrationSession) return;
+  const { dialog } = calibrationSession;
+  calibrationSession = null;
+  lastSwipe = null; // Open-hand moves between targets are not workspace swipes.
+  hide();
+  shown.clear();
+  dialog.close();
+  // Move the overlay out before removing the dialog that owns it.
+  placeLayer();
+  dialog.remove();
+  alignmentStatus();
+}
+
+function startCalibration() {
+  if (calibrationSession) return;
+  hide();
+  const dialog = document.createElement('dialog');
+  dialog.className = 'hand-calibration';
+  dialog.setAttribute('aria-label', 'Match your hand position');
+  const title = document.createElement('h2');
+  const help = document.createElement('p');
+  help.className = 'calibration-help';
+  help.setAttribute('role', 'status');
+  const target = document.createElement('div');
+  target.className = 'calibration-target';
+  target.setAttribute('aria-hidden', 'true');
+  const progress = document.createElement('progress');
+  progress.className = 'calibration-progress';
+  progress.max = 1;
+  progress.setAttribute('aria-label', 'Hold your pinch steady');
+  const cancel = document.createElement('button');
+  cancel.className = 'button secondary calibration-cancel';
+  cancel.textContent = 'Cancel';
+  cancel.onclick = finishCalibration;
+  const retry = document.createElement('button');
+  retry.className = 'button calibration-retry';
+  retry.textContent = 'Try again';
+  retry.onclick = () => { calibrationSession.fit = new HandCalibration(); calibrationView(); };
+  dialog.append(title, help, target, progress, cancel, retry);
+  dialog.addEventListener('cancel', event => { event.preventDefault(); finishCalibration(); });
+  dialog.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && calibrationSession?.fit.error) { event.preventDefault(); retry.onclick(); }
+  });
+  document.body.append(dialog);
+  calibrationSession = { dialog, title, help, target, progress, retry, fit: new HandCalibration(), retryArmed: false };
+  dialog.showModal();
+  alignmentStatus();
+  calibrationView();
+  placeLayer();
+}
+
+function calibrateFrame(pointer, timestamp) {
+  const session = calibrationSession;
+  if (!session) return;
+  lastFrameAt = performance.now();
+  // Calibration pinches never press workspace buttons or draw on the board.
+  hide();
+  if (session.fit.error) {
+    if (pointer.visible && pointer.observed !== false && !pointer.predicted && !pointer.cancelled) {
+      if (!pointer.down) session.retryArmed = true;
+      else if (session.retryArmed) { session.fit = new HandCalibration(); session.retryArmed = false; }
+    }
+  } else {
+    session.fit.update(pointer, timestamp);
+  }
+  if (session.fit.done && projection.setHandCalibration(session.fit.source)) {
+    mappingChanged();
+    savePreferences();
+    finishCalibration();
+    window.dispatchEvent(new CustomEvent('waveboard-calibration-complete'));
+    return;
+  }
+  calibrationView();
+}
+
 function apply(pointer) {
   lastFrameAt = performance.now();
   // QProcess can deliver several camera frames before the display repaints.
@@ -188,7 +311,9 @@ function apply(pointer) {
   // Consume even suppressed swipes so they cannot replay on re-entry.
   if (newSwipe) lastSwipe = pointer.swipe_id;
   if (!pointer.visible || document.hidden) return hide();
-  const mapped = projection.point(pointer.x, pointer.y, pointer.camera_x, pointer.camera_y);
+  const fingertip = pointer.hands?.find(hand => hand.id === pointer.hand)?.camera_points?.[8];
+  const mapped = projection.handCalibration ? (fingertip ? projection.cameraPoint(...fingertip) : null) :
+    projection.point(pointer.x, pointer.y, pointer.camera_x, pointer.camera_y);
   placeLayer();
   targets.clear();
   for (const hand of pointer.hands || []) {
@@ -360,12 +485,18 @@ let lastStatsAt = 0;
 function trackingFrame(data) {
   if (!validPointer(data.pointer)) return;
   const geometry = data.camera ? `${data.camera.width}:${data.camera.height}` : null;
-  if (cameraGeometry && geometry && cameraGeometry !== geometry) projection.reset();
-  cameraGeometry = geometry;
+  if (cameraGeometry && geometry && cameraGeometry !== geometry) {
+    projection.reset({ clearHand: true });
+    finishCalibration();
+    savePreferences();
+  }
+  if (geometry) cameraGeometry = geometry;
+  alignmentStatus();
   projection.update(data.projection, performance.now(), data.timestamp);
   mappingChanged();
   alignmentStatus();
-  apply(data.pointer);
+  if (calibrationSession) calibrateFrame(data.pointer, data.timestamp);
+  else apply(data.pointer);
   if (performance.now() - lastStatsAt > 500) {
     lastStatsAt = performance.now();
     window.dispatchEvent(new CustomEvent("waveboard-tracking-stats", { detail: {
@@ -405,15 +536,23 @@ function connect() {
 // The tracker only sends while it sees frames; treat silence as a lost hand.
 setInterval(() => {
   if ((!cursor.hidden || targets.size) && performance.now() - lastFrameAt > STALE_MS) hide();
+  if (calibrationSession && performance.now() - lastFrameAt > STALE_MS) {
+    calibrationSession.fit.interrupt('Waiting for your hand. Open your pinch, then try the target.');
+    calibrationView();
+  }
+  alignmentStatus();
   projection.expire(performance.now());
   mappingChanged();
   alignmentStatus();
-  if (projection.enabled) placeLayer();
+  if (projection.enabled || calibrationSession) placeLayer();
 }, 200);
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { projection.reset(); mappingChanged(); hide(); }
+  if (document.hidden) { finishCalibration(); projection.reset(); mappingChanged(); hide(); }
 });
-window.addEventListener("resize", () => { projection.reset(); mappingChanged(); alignmentStatus(); paintSoon(); });
+window.addEventListener("resize", () => {
+  finishCalibration(); projection.reset({ clearHand: true }); mappingChanged();
+  alignmentStatus(); savePreferences(); paintSoon();
+});
 if (window.WaveBoardDesktop) {
   window.WaveBoardNative.then(bridge => {
     bridge.hands.connect(encoded => {

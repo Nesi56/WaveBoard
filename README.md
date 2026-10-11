@@ -126,22 +126,47 @@ Tap opens controls and items; press and hold exposes details where offered. Draw
 
 ### Hand mirroring and projection alignment
 
+For hands held **in the air**, use **Menu → Align hands** (also in Settings).
+Enter fullscreen first, stand where you normally work, and keep the same hand
+distance and viewing position throughout calibration. Place your index fingertip
+over each of the four targets, pinch and hold still until it advances, then open
+your hand before moving to the next target. A fifth target checks the center.
+The gesture is measured directly from the camera; the old cursor does not need
+to reach the target. Calibration pinches do not click or draw on the workspace.
+
+This measures scale and perspective at your working hand position, including an
+offset that grows from one side of the screen to the other. The cursor then uses
+the same index fingertip as calibration, and every skeleton joint uses the same
+mapping. A failed center check asks you to retry without replacing a previous
+alignment. **Cancel** or **Escape** leaves the previous alignment intact.
+
+Hand calibration is saved locally and takes priority over screen corner markers.
+It does not disappear when a marker is covered. **Settings → Reset alignment**
+removes it. Resizing the workspace or changing camera resolution clears it;
+run **Align hands** again after moving the camera, projector, or your working
+position. This is still a mapping at one working depth, not automatic 3D sensing.
+
+The interface uses larger text and controls for 480p projectors: 26px body text,
+28px menu text, and generous buttons. Long menus and Settings scroll instead of
+reducing the text size.
+
 **Settings → Mirror hands** reverses the skeleton, cursor, and horizontal gestures
 together. It is on by default for a camera facing the projection. Turn it off if
-your camera setup moves the overlay in the wrong direction.
+your camera setup moves the overlay in the wrong direction before calibration.
 
-Enable **Settings → Align to projection borders** to show four black-and-white
+For hands close to the actual screen surface, enable **Settings → Screen corner markers** to show four black-and-white
 corner markers. The camera detects their identities and maps the hand positions
 to the projected area, correcting position, scale, perspective, and orientation.
 Wait for **Aligned to projection**; all four markers must be visible and steady
 across three scans. The markers remain visible to track movement of the setup.
 Automatic alignment determines orientation itself; the mirror switch applies to
-manual alignment. Preferences are saved locally, but calibration is measured
-again each session and after resizing. **Recheck corners** starts a fresh scan.
+uncalibrated alignment. Preferences are saved locally, but corner calibration is
+measured again each session and after resizing. **Recheck corners** starts a fresh
+scan. Corner markers hide behind menus and dialogs while their alignment is held.
 
-Keep the camera close to the projector and hands close to the projection surface.
-This is alignment to a flat screen, not depth sensing: hands far in front of the
-screen can still appear offset. A camera aimed away from the projection cannot
+Keep the camera close to the projector when using corner markers. Corner detection
+aligns to the flat screen: for hands in front of it, use **Align hands** instead.
+A camera aimed away from the projection cannot
 detect its borders. Good focus and contrast help; if the projected markers are
 too small in the camera image, move closer or try `--processing-width 960`.
 

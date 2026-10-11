@@ -58,12 +58,27 @@ confirmation. No operating-system file dialog is required during these flows.
 
 ## Align hands to the projection
 
+For hands held in the air, use **Menu → Align hands**. Four deliberate, stable
+pinches measure the index fingertip (`camera_points[8]`) at on-screen targets;
+a fifth target validates the center. Stay at your normal working distance and
+viewing position. Open the hand between targets. Flow and predicted frames do
+not count as samples; identity changes and tracking gaps reset the current hold.
+An inconsistent center or collapsed set of targets is rejected.
+
+The resulting camera-to-screen mapping corrects scale, perspective and offset at
+that working position. It takes priority over the corner mapping for skeletons,
+swipes and the cursor; the cursor uses the index fingertip with this mode. The
+calibration is saved locally with viewport dimensions and camera resolution.
+Resize/resolution changes invalidate it. Recalibrate after moving the setup or
+changing your standing position. This cannot track changing depth automatically.
+The calibration flow consumes all gestures without passing clicks to the workspace.
+
 **Settings → Mirror hands** is enabled by default. The tracker internally uses
 mirrored camera images; the workspace reverses its manual mapping for a camera
 beside the projector facing the screen. The skeleton, cursor, and swipes share
 that direction. Turn the switch off for a setup that needs the opposite direction.
 
-Enable **Settings → Align to projection borders** to display four distinct corner
+For hands near the screen surface, enable **Settings → Screen corner markers** to display four distinct corner
 markers. Keep the camera beside the projector with both the hands and the entire
 projected screen in view. Three steady detections establish a perspective mapping
 from camera coordinates to the projection; status then reads **Aligned to
@@ -82,8 +97,11 @@ are also included for the cursor, every skeleton joint, and swipe endpoints.
 
 If markers are briefly hidden, the previous alignment holds for up to 2.5 seconds.
 After that, the workspace reports manual alignment and cancels a held gesture.
+This timeout applies only to the corner mapping, never a saved hand calibration.
+Markers are intentionally hidden while a menu/dialog is open; this pauses corner
+scanning and preserves the remaining timeout until the menu closes.
 Show an open hand before pressing again. Resizing, camera resolution changes, and
-**Recheck corners** clear the mapping. Calibration is not saved between sessions.
+**Recheck corners** clear the corner mapping. Corner calibration is not saved between sessions.
 If detection cannot find all corners, improve focus/contrast, move the camera
 closer, or use `--processing-width 960` so markers occupy enough camera pixels.
 

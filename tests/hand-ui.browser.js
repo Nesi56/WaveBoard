@@ -12,6 +12,8 @@ window.handUIResults = { checks: [], error: null };
   const point = (selector, offset = 0) => {
     const element = typeof selector === 'string' ? document.querySelector(selector) : selector;
     if (!element) throw Error('Missing control ' + selector);
+    // Large 480p controls may be below the fold in a scrollable menu/dialog.
+    element.scrollIntoView({ block: 'center', inline: 'nearest' });
     const box = element.getBoundingClientRect();
     return { x: box.left + box.width / 2 + offset, y: box.top + box.height / 2 };
   };
@@ -29,7 +31,7 @@ window.handUIResults = { checks: [], error: null };
     await until(() => document.querySelector('#contrast-setting'));
     const checkbox = document.querySelector('#contrast-setting');
     const before = checkbox.checked;
-    gesture('.settings-row');
+    gesture(checkbox.closest('label'));
     check(checkbox.checked !== before, 'whole checkbox label selects by hand');
     check(!!document.querySelector('#quit-app'), 'close app available in settings');
     gesture('#dialog-close');
