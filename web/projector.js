@@ -5,7 +5,7 @@ const tools = [
   { page: "models", label: "3D studio", icon: "cube", color: "blue", description: "Explore every angle" },
   { page: "files", label: "Files", icon: "folder", color: "yellow", description: "Browse and open your work" },
   { page: "video", label: "Video", icon: "play", color: "mint", description: "Watch and learn together" },
-  { page: "slides", label: "Slides", icon: "slides", color: "violet", description: "Present, swipe, discover" },
+  { page: "slides", label: "Slides", icon: "slides", color: "violet", description: "Present and discover" },
 ];
 const homeOrder = [0, 4, 2, 3, 1];
 
@@ -17,13 +17,13 @@ export function renderProjectorHome({ main, icon, navigate, index = 0, onIndexCh
         <div class="home-meta"><time class="home-time"></time><span class="home-hand-status" role="status"><i aria-hidden="true"></i><span></span></span></div>
         <h1 class="home-brand">What shall we open?</h1>
       </header>
-      <div class="home-carousel" role="group" aria-roledescription="carousel" aria-label="Tools"></div>
+      <div class="home-carousel" role="group" aria-roledescription="carousel" aria-label="Tools"><div class="home-carousel-track"></div></div>
       <div class="carousel-dots" role="status" aria-live="polite" aria-atomic="true"></div>
       <footer class="home-footer">
         <div class="home-paging">
           <button type="button" id="previous-tool" class="round-control carousel-arrow" aria-label="Previous tool">${icon("left")}</button>
           <button type="button" id="next-tool" class="round-control carousel-arrow" aria-label="Next tool">${icon("right")}</button>
-          <span class="home-swipe-hint">Swipe for more</span>
+          <span class="home-swipe-hint">Point &amp; hold at edge</span>
         </div>
         <div class="home-shortcuts">
           <button type="button" id="home-fullscreen" class="round-control" aria-label="Full screen">${icon("expand")}</button>
@@ -33,6 +33,7 @@ export function renderProjectorHome({ main, icon, navigate, index = 0, onIndexCh
       </footer>
     </section>`;
   const carousel = main.querySelector(".home-carousel");
+  const track = main.querySelector(".home-carousel-track");
   const previous = main.querySelector("#previous-tool");
   const next = main.querySelector("#next-tool");
   const dots = main.querySelector(".carousel-dots");
@@ -41,26 +42,87 @@ export function renderProjectorHome({ main, icon, navigate, index = 0, onIndexCh
   const calibrate = main.querySelector("#home-calibrate");
   const fullscreen = main.querySelector("#home-fullscreen");
   const settingsButton = main.querySelector("#home-settings");
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let shown = current;
+  let pendingSteps = 0;
+  let movingTo = null;
+  let animationTimer = 0;
+  let disposed = false;
 
-  function update() {
+  function updateDots() {
     const position = homeOrder.indexOf(current);
-    carousel.innerHTML = homeOrder.map((_, offset) => {
-      const toolIndex = homeOrder[(position + offset) % homeOrder.length];
+    dots.setAttribute("aria-label", `${tools[current].label}, ${position + 1} of ${tools.length}`);
+    dots.innerHTML = homeOrder.map((_, i) => `<span class="carousel-dot${i === position ? " active" : ""}" aria-hidden="true"></span>`).join("");
+  }
+  function stride() {
+    return track.firstElementChild.getBoundingClientRect().width + parseFloat(getComputedStyle(track).columnGap);
+  }
+  function updateCards() {
+    const restoreFocus = carousel.contains(document.activeElement);
+    const position = homeOrder.indexOf(shown);
+    const visibleCount = Number(getComputedStyle(carousel).getPropertyValue("--visible-cards")) || 3;
+    // One extra card on either side lets the row slide continuously across the
+    // first/last tool boundary without exposing an empty slot.
+    track.innerHTML = Array.from({ length: visibleCount + 2 }, (_, slot) => {
+      const offset = slot - 1;
+      const toolIndex = homeOrder[(position + offset + homeOrder.length) % homeOrder.length];
       const tool = tools[toolIndex];
-      return `<button type="button" ${offset === 0 ? 'id="launch-tool"' : ""} class="launch-card ${offset === 0 ? "selected" : ""}" data-tool-index="${toolIndex}" data-accent="${tool.color}" aria-label="Open ${tool.label}">
+      const offscreen = offset < 0 || offset >= visibleCount;
+      return `<button type="button" ${offset === 0 ? 'id="launch-tool"' : ""} class="launch-card ${offset === 0 ? "selected" : ""}" data-tool-index="${toolIndex}" data-accent="${tool.color}" aria-label="Open ${tool.label}"${offscreen ? ' aria-hidden="true" tabindex="-1"' : ""}>
         <span class="launch-icon">${icon(tool.icon)}</span>
         <span class="launch-label">${tool.label}</span>
         <span class="launch-description">${tool.description}</span>
         <span class="launch-prompt">${offset === 0 ? "Pinch to open" : "Open " + tool.label}</span>
       </button>`;
     }).join("");
-    dots.setAttribute("aria-label", `${tools[current].label}, ${position + 1} of ${tools.length}`);
-    dots.innerHTML = homeOrder.map((_, i) => `<span class="carousel-dot${i === position ? " active" : ""}" aria-hidden="true"></span>`).join("");
+    track.style.transform = `translateX(${-stride()}px)`;
+    if (restoreFocus) track.querySelector("#launch-tool").focus({ preventScroll: true });
+  }
+  function animateNext() {
+    if (disposed || movingTo !== null || !pendingSteps) return;
+    if (reducedMotion.matches) {
+      shown = current;
+      pendingSteps = 0;
+      updateCards();
+      return;
+    }
+    const direction = Math.sign(pendingSteps);
+    pendingSteps -= direction;
+    movingTo = homeOrder[(homeOrder.indexOf(shown) + direction + tools.length) % tools.length];
+    // Measure after the previous row reset so back-to-back inputs each animate.
+    const distance = stride();
+    track.classList.add("is-moving");
+    track.style.transform = `translateX(${-distance * (1 + direction)}px)`;
+    animationTimer = window.setTimeout(finishAnimation, 360);
+  }
+  function finishAnimation() {
+    if (disposed || movingTo === null) return;
+    window.clearTimeout(animationTimer);
+    shown = movingTo;
+    movingTo = null;
+    track.classList.remove("is-moving");
+    updateCards();
+    animateNext();
+  }
+  function transitionFinished(event) {
+    if (event.target === track && event.propertyName === "transform") finishAnimation();
+  }
+  function resizeCarousel() {
+    window.clearTimeout(animationTimer);
+    track.classList.remove("is-moving");
+    shown = current;
+    movingTo = null;
+    pendingSteps = 0;
+    updateCards();
   }
   function advance(delta) {
     current = homeOrder[(homeOrder.indexOf(current) + delta + tools.length) % tools.length];
-    update();
+    // Coalesce full laps during a long key hold instead of building an endless
+    // animation backlog after the user releases the control.
+    pendingSteps = (pendingSteps + delta) % tools.length;
+    updateDots();
     onIndexChange?.(current);
+    animateNext();
   }
   function updateTime() {
     const now = new Date();
@@ -95,7 +157,7 @@ export function renderProjectorHome({ main, icon, navigate, index = 0, onIndexCh
   const goNext = () => advance(1);
   const open = event => {
     const card = event.target.closest("[data-tool-index]");
-    if (card) navigate(tools[Number(card.dataset.toolIndex)].page);
+    if (card && movingTo === null && card.getAttribute("aria-hidden") !== "true") navigate(tools[Number(card.dataset.toolIndex)].page);
   };
   const settings = () => document.querySelector("#settings-button")?.click();
   const calibration = () => document.querySelector("#calibrate-hands-button")?.click();
@@ -103,6 +165,7 @@ export function renderProjectorHome({ main, icon, navigate, index = 0, onIndexCh
   previous.addEventListener("click", goPrevious);
   next.addEventListener("click", goNext);
   carousel.addEventListener("click", open);
+  track.addEventListener("transitionend", transitionFinished);
   settingsButton.addEventListener("click", settings);
   calibrate.addEventListener("click", calibration);
   fullscreen.addEventListener("click", toggleFullscreen);
@@ -110,13 +173,19 @@ export function renderProjectorHome({ main, icon, navigate, index = 0, onIndexCh
   document.addEventListener("fullscreenchange", updateFullscreen);
   window.addEventListener("waveboard-hand-status", updateStatus);
   window.addEventListener("waveboard-alignment-status", updateSettings);
-  update(); updateTime(); updateStatus(); updateSettings(); updateFullscreen();
+  updateCards(); updateDots(); updateTime(); updateStatus(); updateSettings(); updateFullscreen();
+  const resizeObserver = new ResizeObserver(resizeCarousel);
+  resizeObserver.observe(carousel);
   const clock = window.setInterval(updateTime, 15000);
   return () => {
+    disposed = true;
+    window.clearTimeout(animationTimer);
     window.clearInterval(clock);
+    resizeObserver.disconnect();
     previous.removeEventListener("click", goPrevious);
     next.removeEventListener("click", goNext);
     carousel.removeEventListener("click", open);
+    track.removeEventListener("transitionend", transitionFinished);
     settingsButton.removeEventListener("click", settings);
     calibrate.removeEventListener("click", calibration);
     fullscreen.removeEventListener("click", toggleFullscreen);

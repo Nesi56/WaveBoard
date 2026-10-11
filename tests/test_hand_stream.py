@@ -16,6 +16,16 @@ def encode(*packets):
 
 
 class HandStreamTests(unittest.TestCase):
+    def test_pose_changes_survive_motion_coalescing(self):
+        packets = [frame(pose="peace"), frame(pose=None), frame(pose="peace"), frame(pose="point")]
+        actual = list(map(json.loads, HandPacketStream().feed(encode(*packets))))
+        self.assertEqual(actual, packets)
+
+    def test_pointing_excursion_away_from_edge_cannot_be_coalesced(self):
+        packets = [frame(0.95, pose="point"), frame(0.5, pose="point"), frame(0.95, pose="point")]
+        actual = list(map(json.loads, HandPacketStream().feed(encode(*packets))))
+        self.assertEqual(actual, packets)
+
     def test_batched_press_drag_release_and_hover_keep_transition_coordinates(self):
         stream = HandPacketStream()
         packets = [json.loads(line) for line in stream.feed(encode(

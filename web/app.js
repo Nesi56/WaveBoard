@@ -205,6 +205,7 @@ function modal(title, body, actions = "") {
     `<div class="dialog-heading"><h2>${title}</h2><button class="icon-button" id="dialog-close" aria-label="Close dialog">${icon("close")}</button></div>${body}${actions ? `<div class="dialog-actions">${actions}</div>` : ""}`;
   $("#dialog-close").onclick = () => $("#dialog").close();
   if (!$("#dialog").open) $("#dialog").showModal();
+  $("#dialog").scrollTop = 0;
 }
 $("#dialog").addEventListener("click", (e) => {
   if (e.target === $("#dialog")) {
@@ -352,7 +353,7 @@ function downloadBlob(blob, name) {
 async function renderModels() {
   const token = state.navToken;
   $("#main").innerHTML =
-    `<section class="model-workspace"><div class="model-heading"><span class="model-dot"></span><span>3D Viewer · <span id="model-name">Wave sculpture</span></span>${button("open-model", "Open", "folder", "secondary")}</div><div class="viewer-wrap"><div id="viewer-host" class="viewer-host"></div><div class="model-zoom">${roundButton("zoom-model-in", "Zoom in", "plus")}${roundButton("zoom-model-out", "Zoom out", "minus")}</div><p class="gesture-hint model-hint">Pinch and drag to rotate</p></div><footer class="workspace-footer">${homeButton()}<div class="control-dock">${roundButton("reset-model", "Reset view", "rotate")}${roundButton("auto-rotate", "Auto rotate", "spark", 'aria-pressed="false"')}${roundButton("wire-mode", "Wireframe", "cube", 'aria-pressed="false"')}${roundButton("model-fullscreen", "Full screen", "expand")}</div></footer></section>`;
+    `<section class="model-workspace"><div class="model-heading"><span class="model-dot"></span><span>3D Viewer · <span id="model-name">Untitled.glb</span></span>${button("open-model", "Open", "folder", "secondary")}</div><div class="viewer-wrap"><div id="viewer-host" class="viewer-host"></div><div class="model-zoom">${roundButton("zoom-model-in", "Zoom in", "plus")}${roundButton("zoom-model-out", "Zoom out", "minus")}</div><p class="gesture-hint model-hint">Pinch and drag to rotate</p></div><footer class="workspace-footer">${homeButton()}<div class="control-dock">${roundButton("reset-model", "Reset view", "rotate")}${roundButton("auto-rotate", "Auto rotate", "spark", 'aria-pressed="false"')}${roundButton("wire-mode", "Wireframe", "cube", 'aria-pressed="false"')}${roundButton("model-fullscreen", "Full screen", "expand")}</div></footer></section>`;
   setMenu(
     `${button("solid-mode", "Solid surfaces", "cube", "menu-tool")}<p id="model-status" class="menu-note" role="status">Loading…</p>`,
   );
@@ -555,6 +556,12 @@ async function renderFiles() {
         `<div class="empty-state"><h2>Files unavailable</h2><p>${escapeHTML(e.message)}</p></div>`;
   }
 }
+window.addEventListener('waveboard-home-gesture', async () => {
+  if ($("#slide-stage")?.classList.contains('presenting') || document.fullscreenElement?.id === 'slide-stage') {
+    try { await exitPresentation(); } catch {}
+  }
+  await navigate('home');
+});
 function renderFileLocations() {
   const host = $("#file-locations");
   if (!host) return;
@@ -970,7 +977,7 @@ function renderSlides() {
   state.slideIndex = 0;
   state.slideTitle = "Meet your new workspace";
   $("#main").innerHTML =
-    `<section class="slides-workspace"><div class="slide-deck">${roundButton("prev-slide", "Previous slide", "left")}<div class="slide-stage" id="slide-stage"></div>${roundButton("next-slide", "Next slide", "right")}</div><footer class="workspace-footer">${homeButton()}<div class="control-dock">${roundButton("open-slides", "Open slides", "folder")}${roundButton("present-slides", "Present slides", "expand")}<span class="slide-counter" id="slide-counter"></span></div><p class="gesture-hint slide-hint">Swipe palm to turn</p></footer></section>`;
+    `<section class="slides-workspace"><div class="slide-deck">${roundButton("prev-slide", "Previous slide", "left")}<div class="slide-stage" id="slide-stage"></div>${roundButton("next-slide", "Next slide", "right")}</div><footer class="workspace-footer">${homeButton()}<div class="control-dock">${roundButton("open-slides", "Open slides", "folder")}${roundButton("present-slides", "Present slides", "expand")}<span class="slide-counter" id="slide-counter"></span></div><p class="gesture-hint slide-hint">Point & hold at edge</p></footer></section>`;
   setMenu(
     `<p id="slide-note" class="menu-note">Sample slides · Open a presentation using the folder button.</p>`,
   );
@@ -1127,7 +1134,7 @@ document.addEventListener("keydown", (event) => {
 $("#help-button").onclick = () =>
   modal(
     "Simple by design",
-    `<div class="dialog-copy"><p><strong>Hands:</strong> Move your index finger to point. Pinch thumb and index, then release to select. The highlighted control shows your target. Keep pinching and move up or down to scroll lists. Pinch and drag the video bar to seek.</p><p><strong>Home:</strong> Tap a tool card to open it.</p><p><strong>Whiteboard:</strong> Pick a pen and color, then drag to draw.</p><p><strong>More:</strong> The bottom-right button opens extra tools and settings. The home button returns to your tools.</p><p><strong>Files:</strong> Pinch to open. Use the three-dot button for details.</p><p><strong>3D:</strong> Pinch and drag to rotate. Use the + and − buttons to zoom.</p></div>`,
+    `<div class="dialog-copy"><p><strong>Hands:</strong> Move your index finger to point. Pinch thumb and index, then release to select. The highlighted control shows your target. Keep pinching and move up or down to scroll lists. Pinch and drag the video bar to seek. Hold a peace sign for 3 seconds to return Home; the ring around your cursor shows the countdown.</p><p><strong>Home and slides:</strong> Point with only your index finger and hold near the left or right edge to move repeatedly. Move away to stop. Tap or pinch a tool card to open it.</p><p><strong>Whiteboard:</strong> Pick a pen and color, then drag to draw.</p><p><strong>More:</strong> The bottom-right button opens extra tools and settings. The home button returns to your tools.</p><p><strong>Files:</strong> Pinch to open. Use the three-dot button for details.</p><p><strong>3D:</strong> Pinch and drag to rotate. Use the + and − buttons to zoom.</p></div>`,
   );
 function alignHands() {
   closeMenu();

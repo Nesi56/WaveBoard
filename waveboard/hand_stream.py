@@ -20,7 +20,7 @@ class HandPacketStream:
         if packet.get("type") != "frame" or not isinstance(pointer, dict):
             return None
         return tuple(pointer.get(key) for key in (
-            "visible", "down", "hand", "cancelled", "swipe_id", "observed", "motion_tracked"
+            "visible", "down", "hand", "cancelled", "swipe_id", "observed", "motion_tracked", "pose"
         ))
 
     def feed(self, chunk):
@@ -50,7 +50,7 @@ class HandPacketStream:
                     if isinstance(packet, dict) and packet.get("type") in {"frame", "status"}:
                         key = self.gesture_key(packet)
                         transition = key is None or key != self.previous_gesture_key
-                        if packets and not transition and not key[1] and not protected[-1] \
+                        if packets and not transition and not key[1] and packet["pointer"].get("pose") != "point" and not protected[-1] \
                                 and key == self.gesture_key(packets[-1]):
                             packets[-1] = packet
                         else:

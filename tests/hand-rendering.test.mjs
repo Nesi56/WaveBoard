@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-const source = (await readFile(new URL('../web/hands.js', import.meta.url), 'utf8')).replace(/^import .*projection\.js.*;$/m, '');
+const source = (await readFile(new URL('../web/hands.js', import.meta.url), 'utf8')).replace(/^import .*;$/gm, '');
 const mapping = await import(`data:text/javascript;base64,${Buffer.from(await readFile(new URL('../web/projection.js', import.meta.url), 'utf8')).toString('base64')}`);
+const holds = await import(`data:text/javascript;base64,${Buffer.from(await readFile(new URL('../web/hold-gestures.js', import.meta.url), 'utf8')).toString('base64')}`);
 async function trackerFixture(preferences = null) {
   let now = 1000, receive;
   let saved = preferences;
@@ -11,7 +12,7 @@ async function trackerFixture(preferences = null) {
   const context2d = new Proxy({}, { get: (_, key) => (...args) => { if (key === 'arc') arcs.push(args); } });
   const element = tag => {
     const el = { tag, style: {}, dataset: {}, hidden: false, parentElement: null, open: false,
-      setAttribute() {}, append(...children) { for (const child of children) child.parentElement = this; },
+      setAttribute() {}, querySelector() { return { setAttribute() {} }; }, append(...children) { for (const child of children) child.parentElement = this; },
       addEventListener() {}, showModal() { this.open = true; }, close() { this.open = false; }, remove() { this.parentElement = null; },
       getContext: () => context2d };
     elements.push(el);
@@ -26,7 +27,7 @@ async function trackerFixture(preferences = null) {
     WaveBoardInput: { pointer(event) { inputs.push(event); return true; }, hover() {}, suspend() {} },
     addEventListener(type, callback) { listeners[type] = callback; }, dispatchEvent(event) { events.push(event); } };
   vm.runInNewContext(source, { document: doc, window: win, location: { search: '' }, URLSearchParams,
-    ...mapping, localStorage: { getItem: () => JSON.stringify(preferences), setItem(key, value) { saved = JSON.parse(value); } },
+    ...mapping, ...holds, localStorage: { getItem: () => JSON.stringify(preferences), setItem(key, value) { saved = JSON.parse(value); } },
     performance: { now: () => now }, requestAnimationFrame: cb => frames.push(cb),
     setInterval: cb => intervals.push(cb), setTimeout() {},
     CustomEvent: class { constructor(type, data) { this.type = type; Object.assign(this, data); } },
@@ -37,7 +38,7 @@ async function trackerFixture(preferences = null) {
   } }));
   const tick = (milliseconds = 16) => { now += milliseconds; const pending = frames.splice(0); pending.forEach(cb => cb(now)); };
   const cursor = elements.find(el => el.className === 'hand-cursor');
-  return { emit, tick, inputs, cursor, arcs, keys, events, listeners, elements, controls: win.WaveBoardHands, saved: () => saved,
+  return { emit, tick, inputs, cursor, arcs, keys, events, listeners, elements, body: doc.body, controls: win.WaveBoardHands, saved: () => saved,
     status: patch => receive(JSON.stringify({ type: 'status', ...patch })),
     expire(ms = 600) { now += ms; intervals.forEach(cb => cb()); } };
 }
@@ -152,7 +153,7 @@ test('batched drag excursion is consumed before release returns to start', async
   assert.equal(f.inputs[release].x, 100);
 });
 
-test('default mode preserves the original skeleton, click and swipe orientation', async () => {
+test('default mode preserves original skeleton and click orientation; legacy swipes are ignored', async () => {
   const f = await trackerFixture();
   assert.equal(f.controls.getSettings().enabled, false);
   const hand = { id: 'right', primary: true, points: Array.from({ length: 21 }, () => [0.2, 0.4]) };
@@ -161,10 +162,40 @@ test('default mode preserves the original skeleton, click and swipe orientation'
   f.emit({ x: 0.2, y: 0.4, down: true });
   assert.equal(f.inputs.find(e => e.type === 'down').x, 200);
   f.emit({ swipe_id: 1, swipe: 1 });
-  assert.deepEqual(f.keys, ['ArrowLeft']);
+  assert.deepEqual(f.keys, []);
 });
 
-test('projector mode reverses skeleton, click and swipe together', async () => {
+test('fresh point holds navigate in screen coordinates, including projector mode', async () => {
+  for (const mirrored of [false, true]) {
+    const f = await trackerFixture({ projectorMode: mirrored });
+    f.body.dataset.page = 'slides';
+    for (let i = 0; i <= 7; i++) {
+      f.emit({ x: 0.95, pose: 'point', observed: true });
+      f.tick(100);
+    }
+    assert.deepEqual(f.keys, [mirrored ? 'ArrowLeft' : 'ArrowRight']);
+    f.emit({ x: 0.5, pose: 'point', observed: true });
+    f.tick(100);
+    assert.equal(f.elements.find(el => el.className === 'hand-hold-label').hidden, true);
+  }
+});
+
+test('peace shows countdown ring and emits a single Home action after three seconds', async () => {
+  const f = await trackerFixture();
+  f.body.dataset.page = 'files';
+  for (let i = 0; i < 30; i++) { f.emit({ pose: 'peace', observed: true }); f.tick(100); }
+  const label = f.elements.find(el => el.className === 'hand-hold-label');
+  assert.equal(label.hidden, false);
+  assert.match(label.textContent, /Home/);
+  assert.equal(f.events.filter(e => e.type === 'waveboard-home-gesture').length, 0);
+  f.emit({ pose: 'peace', observed: true }); f.tick(100);
+  assert.equal(f.events.filter(e => e.type === 'waveboard-home-gesture').length, 1);
+  assert.equal(label.hidden, true);
+  for (let i = 0; i < 35; i++) { f.emit({ pose: 'peace', observed: true }); f.tick(100); }
+  assert.equal(f.events.filter(e => e.type === 'waveboard-home-gesture').length, 1);
+});
+
+test('projector mode reverses skeleton and click; legacy swipes are ignored', async () => {
   const f = await trackerFixture({ projectorMode: true });
   const hand = { id: 'right', primary: true, points: Array.from({ length: 21 }, () => [0.2, 0.4]) };
   f.emit({ x: 0.2, y: 0.4, hands: [hand] }); f.tick();
@@ -172,7 +203,7 @@ test('projector mode reverses skeleton, click and swipe together', async () => {
   f.emit({ x: 0.2, y: 0.4, down: true });
   assert.equal(f.inputs.find(e => e.type === 'down').x, 800);
   f.emit({ swipe_id: 1, swipe: 1 });
-  assert.deepEqual(f.keys, ['ArrowRight']);
+  assert.deepEqual(f.keys, []);
 });
 
 test('changing alignment during a pinch cancels and requires an open hand', async () => {
@@ -325,7 +356,7 @@ test('turning projector mode off restores original coordinates and retains the f
   f.emit({ x: 0.3, y: 0.6, down: true, hands: [hand] });
   assert.equal(f.inputs.find(e => e.type === 'down').x, 300, 'off uses the original midpoint cursor instead of calibrated fingertip');
   f.emit({ swipe_id: 1, swipe: 1 });
-  assert.deepEqual(f.keys, ['ArrowLeft']);
+  assert.deepEqual(f.keys, []);
   const restoredOff = await trackerFixture(f.saved());
   assert.equal(restoredOff.controls.getSettings().enabled, false);
   assert.equal(restoredOff.controls.getSettings().handCalibrated, false);

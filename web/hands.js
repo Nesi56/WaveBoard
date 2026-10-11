@@ -4,10 +4,11 @@
 // draws every tracked hand as a skeleton over the workspace (the camera image is
 // never shown), and turns the primary hand into window.WaveBoardInput events:
 // a thumb + index pinch presses, drags and releases like a finger on a touch
-// screen, and an open-palm swipe acts as the left / right arrow keys (Home cards,
-// slides). Without the tracker this module stays idle and quietly retries.
+// screen. Point-and-hold at an edge browses cards/slides; a three-second peace
+// sign returns Home. Without the tracker this module stays idle and retries.
 
 import { ProjectionMap, HandCalibration, HAND_TARGETS, MARKER_CENTERS, markerSVG } from "./projection.js";
+import { HoldGestures } from "./hold-gestures.js";
 
 let handPreferences = {};
 try { handPreferences = JSON.parse(localStorage.getItem("waveboard-hand-alignment") || "{}"); } catch {}
@@ -53,6 +54,15 @@ style.textContent = `
 }
 .hand-cursor[data-down="true"] { box-shadow: 0 0 0 2px ${DEEP}, 0 0 0 8px rgb(255 118 89 / 0.35); }
 .hand-cursor[data-tracking="recovering"] { opacity: 0.55; border-style: dashed; }
+.hand-hold-ring { position: absolute; inset: -15px; width: 60px; height: 60px; overflow: visible; transform: rotate(-90deg); }
+.hand-hold-ring circle { fill: none; stroke: #10212b; stroke-width: 5; }
+.hand-hold-ring .hold-progress { stroke: ${MINT}; stroke-linecap: round; }
+.hand-hold-label { position: absolute; top: 51px; left: 50%; transform: translateX(-50%);
+  width: max-content; max-width: 160px; padding: 5px 10px; border-radius: 12px;
+  color: ${PAPER}; background: ${DEEP}; font: 600 22px/1.2 sans-serif; text-align: center; }
+.hand-cursor[data-edge="left"] .hand-hold-label { left: -5px; transform: none; }
+.hand-cursor[data-edge="right"] .hand-hold-label { left: auto; right: -5px; transform: none; }
+.hand-cursor[data-label="above"] .hand-hold-label { top: auto; bottom: 51px; }
 .hand-notice { position: fixed; left: 50%; bottom: 112px; transform: translateX(-50%); z-index: 2147483646;
   width: max-content; max-width: calc(100vw - 32px); padding: 14px 20px; border: 1px solid #294552;
   border-radius: 18px; color: ${PAPER}; background: #192d3a; box-shadow: 0 8px 28px rgb(0 0 0 / 0.2);
@@ -89,6 +99,13 @@ canvas.className = "hand-skeletons";
 const cursor = document.createElement("div");
 cursor.className = "hand-cursor";
 cursor.hidden = true;
+const holdRing = document.createElement('span');
+holdRing.hidden = true;
+holdRing.innerHTML = '<svg class="hand-hold-ring" viewBox="0 0 60 60"><circle cx="30" cy="30" r="26"/><circle class="hold-progress" cx="30" cy="30" r="26" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"/></svg>';
+const holdLabel = document.createElement('span');
+holdLabel.className = 'hand-hold-label';
+holdLabel.hidden = true;
+cursor.append(holdRing, holdLabel);
 const markers = document.createElement("div");
 markers.innerHTML = MARKER_CENTERS.map(([x, y], id) =>
   `<div class="projection-marker" style="left:${x * 100}%;top:${y * 100}%">${markerSVG(id)}</div>`).join("");
@@ -114,7 +131,7 @@ let cursorTarget = null;
 let motionAllowed = false;
 let pendingMove = false;
 let pointerDown = false;
-let lastSwipe = null;
+const holdGestures = new HoldGestures();
 let lastFrameAt = 0;
 const targets = new Map(); // hand id -> { points (CSS px), primary, pinch }
 const shown = new Map();   // hand id -> points currently drawn
@@ -204,6 +221,8 @@ function release(type) {
 }
 
 function hideCursor() {
+  holdGestures.reset();
+  holdRing.hidden = holdLabel.hidden = true;
   release("cancel");
   cursor.hidden = true;
   cursorTarget = null;
@@ -260,7 +279,6 @@ function finishCalibration() {
   const { dialog } = calibrationSession;
   calibrationSession = null;
   updateTrackingStatus();
-  lastSwipe = null; // Open-hand moves between targets are not workspace swipes.
   hide();
   shown.clear();
   dialog.close();
@@ -351,10 +369,6 @@ function apply(pointer) {
     release("cancel");
     armed = false;
   }
-  const newSwipe = observed && !pointer.cancelled && pointer.swipe_id !== lastSwipe;
-  const canSwipe = newSwipe && lastSwipe !== null;
-  // Consume even suppressed swipes so they cannot replay on re-entry.
-  if (newSwipe) lastSwipe = pointer.swipe_id;
   if (!pointer.visible || document.hidden) return hide();
   const fingertip = pointer.hands?.find(hand => hand.id === pointer.hand)?.camera_points?.[8];
   const mapped = projection.handCalibrated ? (fingertip ? projection.cameraPoint(...fingertip) : null) :
@@ -376,10 +390,6 @@ function apply(pointer) {
     hideCursor();
     paintSoon();
     return;
-  }
-  if (canSwipe) {
-    const direction = projection.swipe(pointer);
-    if (direction) arrowKey(direction < 0 ? "ArrowRight" : "ArrowLeft");
   }
   if (pressed && pointer.hand !== pressHand) {
     release("cancel");
@@ -412,6 +422,15 @@ function apply(pointer) {
     }
   }
   pendingMove = pressed && motionAllowed;
+  const menu = document.querySelector('#workspace-menu');
+  const action = holdGestures.update(pointer, mapped, {
+    page: document.body.dataset.page, hidden: document.hidden,
+    blocked: Boolean(openModal() || (menu && !menu.hidden)),
+  }, performance.now());
+  if (action?.home) {
+    release('cancel');
+    window.dispatchEvent(new CustomEvent('waveboard-home-gesture'));
+  } else if (action?.direction) arrowKey(action.direction < 0 ? 'ArrowLeft' : 'ArrowRight');
   paintSoon();
 }
 
@@ -439,6 +458,14 @@ function paint(now) {
   for (const id of shown.keys()) if (!targets.has(id)) shown.delete(id);
   const glide = 1 - Math.exp(-dt / GLIDE_MS);
   let moving = false;
+  const hold = holdGestures.progress(now);
+  holdRing.hidden = holdLabel.hidden = !hold;
+  if (hold) {
+    holdRing.querySelector('.hold-progress').setAttribute('stroke-dashoffset', String(100 * (1 - hold.value)));
+    holdLabel.textContent = hold.kind === 'home' ? `Home · ${Math.max(1, Math.ceil(3 * (1 - hold.value)))}s` : hold.direction < 0 ? '‹ Previous' : 'Next ›';
+    cursor.dataset.edge = last.x < 100 ? 'left' : last.x > window.innerWidth - 100 ? 'right' : '';
+    cursor.dataset.label = last.y > window.innerHeight - 100 ? 'above' : 'below';
+  }
   if (cursorTarget && !cursor.hidden) {
     last.x += (cursorTarget.x - last.x) * glide;
     last.y += (cursorTarget.y - last.y) * glide;
@@ -467,7 +494,7 @@ function paint(now) {
     }
     drawHand(points, target);
   }
-  painting = moving;
+  painting = moving || Boolean(hold);
   if (painting) requestAnimationFrame(paint);
 }
 
@@ -581,7 +608,6 @@ function connect() {
     hide();
     projection.reset();
     alignmentStatus();
-    lastSwipe = null;
     setTimeout(connect, RETRY_MS);
   });
 }

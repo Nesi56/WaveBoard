@@ -29,16 +29,6 @@ function releaseObject(object) {
   geometries.forEach((geometry) => geometry.dispose());
 }
 
-function makeSample() {
-  const sculpture = new THREE.Mesh(
-    new THREE.TorusKnotGeometry(1.02, 0.3, 180, 24, 2, 3),
-    new THREE.MeshStandardMaterial({ color: 0x77ddd1, metalness: 0.28, roughness: 0.27 }),
-  );
-  sculpture.name = 'Wave sculpture';
-  sculpture.rotation.set(0.14, 0.28, -0.16);
-  return sculpture;
-}
-
 // Single-file imports stay self-contained and cannot silently request external
 // textures or buffers from an unavailable USB path or internet host.
 function validateGltfResources(buffer, extension) {
@@ -333,7 +323,10 @@ export async function createModelViewer(container, options = {}) {
   intersectionObserver.observe(container);
 
   resize();
-  showModel(makeSample(), 'Wave sculpture');
+  reset();
+  // Return the controls immediately so navigation can dispose the viewer and
+  // cancel an in-flight default load, just like any model opened by the user.
+  load(new URL('./assets/demo/untitled.glb', import.meta.url), 'Untitled.glb').catch(() => {});
 
   return {
     load,

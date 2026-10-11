@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 import unittest
 
-from gestures import FINGERS, TIPS, HandEngine, HandIdentities, PinchState, finger_states, pinch_ratios
+from gestures import FINGERS, TIPS, HandEngine, HandIdentities, PinchState, finger_states, hand_pose, pinch_ratios
 
 
 def open_points():
@@ -47,6 +47,21 @@ class FingerGeometryTests(unittest.TestCase):
         wide = [[p[0] / 2, p[1], p[2]] for p in points]
         self.assertAlmostEqual(pinch_ratios(points, 1)["index"], pinch_ratios(wide, 2)["index"])
 
+    def test_palm_width_supports_pinch_when_wrist_is_foreshortened(self):
+        points = [[0.5, 0.5, 0] for _ in range(21)]
+        points[0], points[9] = [0.5, 0.61, 0], [0.5, 0.6, 0]
+        points[5], points[17] = [0.4, 0.6, 0], [0.6, 0.6, 0]
+        points[4], points[8] = [0.48, 0.4, 0], [0.515, 0.4, 0]
+        self.assertLess(pinch_ratios(points, 1)["index"], PinchState().on)
+        enlarged = [[0.2 + value * 2 for value in point] for point in points]
+        self.assertAlmostEqual(pinch_ratios(points, 1)["index"], pinch_ratios(enlarged, 1)["index"])
+
+    def test_depth_correction_is_bounded_when_model_depth_is_noisy(self):
+        points = [[0.5, 0.5, 0] for _ in range(21)]
+        points[0], points[9] = [0.5, 0.7, 0], [0.5, 0.5, 10]
+        points[4], points[8] = [0.3, 0.4, 0], [0.5, 0.4, 0]
+        self.assertGreater(pinch_ratios(points, 1)["index"], PinchState().off)
+
 
 class RealLandmarkTests(unittest.TestCase):
     def test_mediapipe_sample_hands(self):
@@ -55,25 +70,61 @@ class RealLandmarkTests(unittest.TestCase):
             with self.subTest(image=hand["image"]):
                 states = finger_states(hand["world_landmarks"])
                 self.assertEqual({name for name, on in states.items() if on}, set(hand["extended"]))
+                expected = "peace" if hand["image"] == "victory.jpg" else "point" if hand["image"] == "pointing_up.jpg" else None
+                self.assertEqual(hand_pose(states), expected)
+
+    def test_pointing_and_peace_poses_ignore_thumb_but_not_an_index_pinch(self):
+        fingers = {name: name == "index" for name in FINGERS}
+        self.assertEqual(hand_pose(fingers), "point")
+        fingers["thumb"] = True
+        self.assertEqual(hand_pose(fingers), "point")
+        fingers["middle"] = True
+        self.assertEqual(hand_pose(fingers), "peace")
+        self.assertIsNone(hand_pose(fingers, index_pinched=True))
+        fingers["ring"] = True
+        self.assertIsNone(hand_pose(fingers))
 
 
 class PinchTests(unittest.TestCase):
     def test_hysteresis_requires_close_start_and_wider_release(self):
         state = PinchState()
-        self.assertFalse(state.update({"index": 0.20}, 0)["index"])
-        self.assertFalse(state.update({"index": 0.14}, 10)["index"])
-        self.assertTrue(state.update({"index": 0.14}, 60)["index"])
-        self.assertTrue(state.update({"index": 0.20}, 70)["index"])
-        self.assertTrue(state.update({"index": 0.26}, 80)["index"])
-        self.assertFalse(state.update({"index": 0.26}, 130)["index"])
+        self.assertFalse(state.update({"index": 0.24}, 0)["index"])
+        self.assertFalse(state.update({"index": 0.21}, 10)["index"])
+        self.assertTrue(state.update({"index": 0.25}, 50)["index"])
+        self.assertTrue(state.update({"index": 0.30}, 70)["index"])
+        self.assertTrue(state.update({"index": 0.35}, 80)["index"])
+        self.assertTrue(state.update({"index": 0.35}, 140)["index"])
+        self.assertFalse(state.update({"index": 0.35}, 160)["index"])
 
-    def test_nearest_pinch_wins_and_is_mutually_exclusive(self):
+    def test_index_pinch_takes_priority_and_is_mutually_exclusive(self):
         state = PinchState()
         ratios = {"index": 0.12, "middle": 0.09, "ring": 0.5, "pinky": 0.6}
         state.update(ratios, 0)
         actual = state.update(ratios, 60)
-        self.assertTrue(actual["middle"])
+        self.assertTrue(actual["index"])
         self.assertEqual(sum(actual.values()), 1)
+
+    def test_nearby_middle_finger_cannot_steal_a_held_index_pinch(self):
+        state = PinchState()
+        state.update({"index": 0.20, "middle": 0.5}, 0)
+        state.update({"index": 0.20, "middle": 0.5}, 40)
+        self.assertTrue(state.update({"index": 0.30, "middle": 0.01}, 80)["index"])
+        self.assertTrue(state.update({"index": 0.30, "middle": 0.01}, 240)["index"])
+
+    def test_index_opening_rearms_even_when_thumb_rests_on_middle_finger(self):
+        state = PinchState(needs_release=True)
+        state.update({"index": 0.6, "middle": 0.01}, 0)
+        self.assertFalse(state.needs_release)
+        state.update({"index": 0.20, "middle": 0.01}, 40)
+        self.assertTrue(state.update({"index": 0.20, "middle": 0.01}, 80)["index"])
+
+    def test_short_release_noise_does_not_split_a_drag_into_clicks(self):
+        state = PinchState()
+        state.update({"index": 0.20}, 0)
+        state.update({"index": 0.20}, 40)
+        state.update({"index": 0.5}, 60)
+        self.assertTrue(state.update({"index": 0.5}, 120)["index"])
+        self.assertTrue(state.update({"index": 0.25}, 130)["index"])
 
     def test_brief_threshold_noise_does_not_activate(self):
         state = PinchState()

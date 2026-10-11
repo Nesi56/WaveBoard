@@ -48,7 +48,7 @@ There is no Node build, cloud account, web hosting, or browser installation step
 2. Open **WaveBoard** from Applications.
 3. Hold up one hand and move the round cursor onto a control. Pinch thumb and
    index, then release to select; hold a pinch and move to draw or drag.
-   Swipe an open palm to browse Home cards or slides.
+   Point with only your index finger and hold near the left or right edge to browse Home cards or slides. Move away to stop. Hold a peace sign for 3 seconds to return Home; a ring around the cursor shows the countdown.
 4. Pinch the bottom-right three-dot button to open the menu. Its buttons, dialogs, file locations,
    and settings all accept the same hand controls. Pinch and move up or down
    to scroll a list; drag the video bar to seek.
@@ -98,11 +98,11 @@ button accidentally; show an open hand before pinching again.
 
 ## Projector controls
 
-Home shows colorful cards for **Whiteboard**, **Slides**, **Files**, **Video**, and **3D** against a dark navy background. Swipe an open palm or use the arrows to browse, then pinch or tap a card to open it. Keyboard arrow keys work too. Settings, calibration, and fullscreen are directly available from Home.
+Home shows colorful cards for **Whiteboard**, **Slides**, **Files**, **Video**, and **3D** against a dark navy background. Point and hold near either screen edge, or use the arrows to browse. Cards visibly slide as you move through them. Pinch or tap a card to open it. Keyboard arrow keys work too. Settings, calibration, and fullscreen are directly available from Home.
 
 The bottom-right three-dot button opens extra tools, fullscreen, help, and settings. Circular controls along the bottom keep common actions in reach, and coral outlines highlight the control under your hand. The whiteboard has a light dotted canvas and a drawing dock; its color control opens ink and brush-size choices. Save, redo, and clear remain available in the menu. Clearing a board can be undone.
 
-The other utilities share the same dark background and bottom controls. **3D** exposes zoom and view controls around the model. **Files** shows colored file cards and actual device locations, with a Location chooser on narrower screens. **Video** has playback and seek controls. **Slides** keeps previous/next controls beside the presentation and a counter below it. Home is always one button away.
+The other utilities share the same dark background and bottom controls. **3D** opens the bundled `Untitled.glb` demo, including its embedded color texture, and exposes zoom and view controls around the model. **Files** shows colored file cards and actual device locations, with a Location chooser on narrower screens. **Video** has playback and seek controls. **Slides** keeps previous/next controls beside the presentation and a counter below it. Home is always one button away.
 
 The local file picker uses large buttons for folders and device/USB locations.
 In **Files**, choose the destination folder, then **Import** to copy a file from
@@ -127,8 +127,8 @@ Tap opens controls and items; press and hold exposes details where offered. Draw
 ### Projector mode
 
 Enable **Settings → Projector mode** to mirror the hands and align them with the
-projection. It is off by default: with it off, the skeleton, cursor, and swipes
-use the original hand controls, without added mirroring or projection mapping.
+projection. It is off by default: with it off, the skeleton and cursor
+use the original hand coordinates, without added mirroring or projection mapping.
 Turning it off keeps a saved hand calibration for the next time you enable it.
 
 For hands held **in the air**, enable Projector mode, then use **Menu → Align hands**
@@ -156,9 +156,9 @@ The interface uses larger text and controls for 480p projectors: 24–28px inter
 and generous circular buttons. Long menus and Settings scroll instead of
 reducing the text size.
 
-Projector mode mirrors the skeleton, cursor, and horizontal gestures together
-before alignment. A successful calibration determines orientation itself, so the
-result is not mirrored a second time.
+Projector mode mirrors the skeleton and cursor together before alignment.
+A successful calibration determines orientation itself, so the result is not
+mirrored a second time. Edge holds always use the cursor’s final screen position.
 
 Projector mode also shows four black-and-white corner markers when no hand
 calibration is active. For hands close to the actual screen surface, the camera
@@ -211,6 +211,7 @@ python3 -m unittest discover -s tests -v
 (cd gesture-lab && python3 -m unittest discover -s tests -v)
 node tests/hand-input.test.mjs
 node tests/hand-rendering.test.mjs
+node tests/hold-gestures.test.mjs
 node tests/projection.test.mjs
 # With the desktop Qt Python environment and an active display:
 python3 tests/check_hand_ui.py

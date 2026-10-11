@@ -45,9 +45,10 @@ Only one program can use the camera at a time.
 | Pinch, move, release | Drag: draw on the whiteboard, orbit a 3D model |
 | Held pinch moving up / down in a list | Scroll files, folders, or dialog content |
 | Pinch and drag the video bar | Seek within the video |
-| Open palm swiped left / right | Next / previous Home card or slide |
+| Index finger only, held near a screen edge | Repeated previous / next Home card or slide; move away to stop |
+| Peace sign held for 3 seconds | Return Home; cursor ring shows progress |
 
-Pinch the top tab to open the menu. Its controls, file locations, dialog buttons,
+Pinch the bottom-right three-dot button to open the menu. Its controls, file locations, dialog buttons,
 contrast checkbox, and on-screen file search keyboard all work with the hand
 cursor. The control under the cursor highlights before selection. Open files
 through the app's device/USB picker, and use **Files → Import** to copy a file
@@ -60,7 +61,7 @@ confirmation. No operating-system file dialog is required during these flows.
 
 **Settings → Projector mode** combines hand mirroring and projection alignment.
 It is off by default, preserving the original backend cursor, skeleton, and
-swipe coordinates. Turning it off bypasses projection mapping while keeping a
+cursor coordinates. Turning it off bypasses projection mapping while keeping a
 saved hand calibration for the next time you enable it.
 
 For hands held in the air, enable Projector mode, then use **Menu → Align hands**.
@@ -73,14 +74,14 @@ An inconsistent center or collapsed set of targets is rejected.
 
 The resulting camera-to-screen mapping corrects scale, perspective and offset at
 that working position. In Projector mode, it takes priority over the corner mapping
-for skeletons, swipes and the cursor; the cursor uses the index fingertip with this mode. The
+for skeletons and the cursor; the cursor uses the index fingertip with this mode. The
 calibration is saved locally with viewport dimensions and camera resolution.
 Resize/resolution changes invalidate it. Recalibrate after moving the setup or
 changing your standing position. This cannot track changing depth automatically.
 The calibration flow consumes all gestures without passing clicks to the workspace.
 
 Before alignment, Projector mode reverses the manual mapping for a camera beside
-the projector facing the screen. The skeleton, cursor, and swipes share that
+the projector facing the screen. The skeleton and cursor share that
 direction. Calibration sets orientation automatically, without a second mirror.
 
 Projector mode displays four distinct corner markers when no hand calibration is
@@ -99,7 +100,7 @@ rotated and reflected views, and rejects ambiguous duplicate IDs. Scanning runs
 at most twice per second in the inference worker, separate from the capture and
 pointer loop. Frame packets include marker centers and the actual scan timestamp;
 repeated packets cannot count as new calibration evidence. Raw camera coordinates
-are also included for the cursor, every skeleton joint, and swipe endpoints.
+are also included for the cursor, every skeleton joint.
 
 If markers are briefly hidden, the previous alignment holds for up to 2.5 seconds.
 After that, the workspace reports manual alignment and cancels a held gesture.
@@ -137,7 +138,7 @@ rates on your own device.
 If motion becomes uncertain, the cursor briefly holds its last reliable
 position. A hold lasts up to 220 ms; all continued motion expires within 450 ms
 of the latest real hand observation. Flow never invents finger articulation,
-a new pinch, a release, or a swipe. A press that cannot safely continue is
+a new pinch, a release, or a held finger pose. A press that cannot safely continue is
 cancelled, so losing a hand cannot turn into a button click. Show an open hand
 before pinching again after a prolonged loss.
 
@@ -220,7 +221,7 @@ Find the camera with `v4l2-ctl --list-devices` (`sudo apt install v4l-utils`).
 - `tracker.py`: camera capture, MediaPipe settings, and the frames sent to the workspace.
 - `tracker_motion.py`: checked sparse optical flow, delayed-result alignment, and bounded motion retention.
 - `gestures.py`: finger extension, pinch detection with hysteresis, and stable hand ids.
-- `hand_pointer.py`: screen mapping, smoothing, the touch pointer, swipes, and skeleton points.
+- `hand_pointer.py`: screen mapping, smoothing, the touch pointer, finger poses, and skeleton points.
 - `projection.py`: camera detection of the four projection border markers.
 - `server.py`: legacy WebSocket adapter, unused by the desktop app.
 - `tests/fixtures/mediapipe_sample_hands.json`: real MediaPipe landmarks used in tests.
@@ -234,3 +235,5 @@ the test environment; the geometry and pointer tests do not require a camera.
 
 Hand tracking with a live camera, its speed on the Orin Nano, and the gestures at real
 presenting distances still need checking on the device.
+
+Point/peace holds require fresh landmark observations. Optical flow can bridge short gaps, but cannot trigger navigation. Holds reset after hand loss, a pinch, a pose change, or a change of controlling hand. Pinch detection uses palm-relative distance, index-finger priority, and separate press/release thresholds to reduce missed and flickering presses.

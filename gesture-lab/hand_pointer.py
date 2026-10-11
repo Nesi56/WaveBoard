@@ -8,13 +8,14 @@ pointer into browser input:
   hands in view ........... skeletons drawn over the workspace (no camera image)
   primary hand ............ cursor between the thumb and index fingertips
   thumb + index pinch ..... touch: press, drag, release (a quick pinch is a tap)
-  open palm swipe ......... left / right arrow key (Home cards, slides)
+  index pointing / peace .. fresh pose evidence for frontend navigation holds
 
 Pure Python, so it is tested without a camera.
 """
 
 from collections import deque
 import math
+from gestures import hand_pose
 
 # Smoothing and thresholds work in these virtual pixels; the output is 0..1.
 SCREEN = (1280, 720)
@@ -224,7 +225,8 @@ class HandPointer:
         size = (round(SCREEN[1] * aspect_ratio), SCREEN[1])
         if self._map is None or self._map.camera_size != size:
             self._map = ScreenMap(size, SCREEN, self.reach)
-        self._detect_swipes(hands, timestamp)
+        # Navigation is now an explicit index-point hold in the workspace.
+        # Leave legacy swipe packet fields at zero for older consumers.
         self._update_skeletons(hands, timestamp)
 
         primary = next((h for h in hands if h["id"] == self.primary), None)
@@ -243,7 +245,9 @@ class HandPointer:
             self._filter = PointFilter(self.smoothing)
             self._had_gap = False
         self._tracking = {key: primary.get(key) for key in
-                          ("observed", "predicted", "motion_tracked", "tracking_source", "tracking_age_ms")}
+                          ("observed", "predicted", "motion_tracked", "tracking_source", "tracking_age_ms",
+                           "observation_timestamp")}
+        self._tracking.update(self._pose(primary))
 
         if primary["predicted"]:
             self._had_gap = True
@@ -276,28 +280,12 @@ class HandPointer:
         self._point = point
         return self._packet(point)
 
-    def _detect_swipes(self, hands, timestamp):
-        present = {hand["id"] for hand in hands}
-        self._swipes = {hand_id: swipe for hand_id, swipe in self._swipes.items() if hand_id in present}
-        for hand in hands:
-            detector = self._swipes.setdefault(hand["id"], SwipeDetector(self.swipe_distance))
-            if not hand["observed"]:
-                if hand["predicted"]:
-                    detector.reset()
-                continue
-            fingers = hand["fingers"]
-            if not (fingers["index"] and fingers["middle"] and fingers["ring"] and fingers["pinky"]) \
-                    or any(hand["pinches"].values()) or hand.get("reacquired", False):
-                detector.reset()
-                continue
-            point = self._map.to_screen(*hand["palm"][:2])
-            swipe = detector.update(point, timestamp,
-                                    armed=timestamp - self._last_swipe >= self.swipe_cooldown_ms)
-            if swipe:
-                self._last_swipe = timestamp
-                self.swipe_id += 1
-                self.swipe_direction = swipe[0]
-                self._camera_swipe = [list(self._map.to_camera(*endpoint)) for endpoint in (swipe[1], point)]
+    @staticmethod
+    def _pose(hand):
+        pose = None
+        if hand["observed"] and not hand.get("interaction_cancelled") and not hand["pinches"]["index"]:
+            pose = hand.get("pose") if "pose" in hand else hand_pose(hand["fingers"])
+        return {"pose": pose, "pointing": pose == "point", "peace": pose == "peace"}
 
     def _update_skeletons(self, hands, timestamp):
         """All 21 joints of every hand, smoothed and mapped to the screen like the cursor."""
@@ -318,6 +306,7 @@ class HandPointer:
                 camera_points = [[round(value, 6) for value in self._map.to_camera(x, y)]
                                  for x, y in filtered]
             self._skeletons.append({"id": hand["id"], "pinch": bool(hand["pinches"]["index"]),
+                                    **self._pose(hand),
                                     "observed": hand["observed"], "predicted": hand["predicted"],
                                     "motion_tracked": hand["motion_tracked"],
                                     "tracking_age_ms": hand["tracking_age_ms"],
@@ -330,6 +319,7 @@ class HandPointer:
                   "camera_swipe": self._camera_swipe,
                   "observed": False, "predicted": False, "motion_tracked": False,
                   "tracking_age_ms": 0, "tracking_source": "lost", "cancelled": self._cancelled,
+                  "observation_timestamp": None, "pose": None, "pointing": False, "peace": False,
                   **self._tracking,
                   "hands": [{**skeleton, "primary": skeleton["id"] == self.primary} for skeleton in self._skeletons]}
         if point is not None:

@@ -90,15 +90,16 @@ class HandPointerTests(unittest.TestCase):
         held = tracker.update([hand("a", 0.2, 0.5, pinch=True), hand("b", 0.8, 0.5, pinch=True)], 60)
         self.assertEqual(held["hand"], "b")
 
-    def test_open_palm_swipe_is_counted_once(self):
+    def test_open_palm_movement_never_emits_navigation(self):
         tracker = pointer()
         ids = set()
         for i, t in enumerate(range(0, 400, 33)):
             result = tracker.update([hand("a", 0.8 - i * 0.05, 0.5, fingers=FINGERS_OPEN)], t)
             ids.add(result["swipe_id"])
-        self.assertEqual(result["swipe_id"], 1)
-        self.assertEqual(result["swipe"], -1)
-        self.assertEqual(ids, {0, 1})
+        self.assertEqual(result["swipe_id"], 0)
+        self.assertEqual(result["swipe"], 0)
+        self.assertIsNone(result["camera_swipe"])
+        self.assertEqual(ids, {0})
 
     def test_slow_drift_or_pinching_is_not_a_swipe(self):
         tracker = pointer()
@@ -109,25 +110,47 @@ class HandPointerTests(unittest.TestCase):
             result = tracker.update([hand("a", 0.8 - i * 0.05, 0.5, pinch=True, fingers=FINGERS_OPEN)], t)
         self.assertEqual(result["swipe_id"], 0)
 
-    def test_swipe_camera_endpoints_persist_with_their_swipe_id(self):
-        tracker = HandPointer(reach=0.1, smoothing=False)
-        idle = tracker.update([hand("a", 0.7, 0.4, fingers=FINGERS_OPEN)], 0)
-        self.assertIsNone(idle["camera_swipe"])
-        swiped = tracker.update([hand("a", 0.4, 0.45, fingers=FINGERS_OPEN)], 100)
-        self.assertEqual(swiped["swipe_id"], 1)
-        self.assertEqual(swiped["swipe"], -1)
-        for actual, expected in zip(swiped["camera_swipe"], ((0.7, 0.5), (0.4, 0.55))):
-            self.assertAlmostEqual(actual[0], expected[0])
-            self.assertAlmostEqual(actual[1], expected[1])
-        held = tracker.update([], 150)
-        self.assertEqual(held["swipe_id"], swiped["swipe_id"])
-        self.assertEqual(held["camera_swipe"], swiped["camera_swipe"])
-        tracker.update([hand("a", 0.2, 0.4, fingers=FINGERS_OPEN)], 1000)
-        reversed_swipe = tracker.update([hand("a", 0.6, 0.4, fingers=FINGERS_OPEN)], 1100)
-        self.assertEqual(reversed_swipe["swipe_id"], 2)
-        self.assertEqual(reversed_swipe["swipe"], 1)
-        self.assertAlmostEqual(reversed_swipe["camera_swipe"][0][0], 0.2)
-        self.assertAlmostEqual(reversed_swipe["camera_swipe"][1][0], 0.6)
+    def test_pointer_and_skeleton_expose_fresh_navigation_poses(self):
+        tracker = pointer()
+        pointing = tracker.update([hand("a", 0.5, 0.5)], 0)
+        self.assertEqual(pointing["pose"], "point")
+        self.assertTrue(pointing["pointing"])
+        self.assertFalse(pointing["peace"])
+        self.assertEqual(pointing["observation_timestamp"], 0)
+        self.assertEqual(pointing["hands"][0]["pose"], "point")
+        peace_hand = hand("a", 0.5, 0.5, fingers={**FINGERS_RELAXED, "middle": True})
+        peace = tracker.update([peace_hand], 40)
+        self.assertTrue(peace["peace"])
+        self.assertFalse(peace["pointing"])
+        self.assertEqual(peace["hands"][0]["pose"], "peace")
+
+    def test_flow_and_held_poses_cannot_supply_fresh_hold_evidence(self):
+        tracker = pointer()
+        peace_hand = hand("a", 0.5, 0.5, fingers={**FINGERS_RELAXED, "middle": True})
+        tracker.update([peace_hand], 0)
+        flow = tracker.update([{**peace_hand, "observed": False, "tracking_source": "flow",
+                                "observation_timestamp": 0}], 40)
+        held = tracker.update([], 80)
+        for packet in (flow, held):
+            self.assertIsNone(packet["pose"])
+            self.assertFalse(packet["peace"])
+            self.assertFalse(packet["pointing"])
+            self.assertIsNone(packet["hands"][0]["pose"])
+
+    def test_index_pinch_suppresses_navigation_pose_but_other_finger_contact_does_not(self):
+        tracker = pointer()
+        source = hand("a", 0.5, 0.5)
+        source["pinches"]["middle"] = True
+        self.assertTrue(tracker.update([source], 0)["pointing"])
+        source["pinches"]["index"] = True
+        self.assertIsNone(tracker.update([source], 40)["pose"])
+
+    def test_explicit_engine_pose_rejection_is_preserved(self):
+        tracker = pointer()
+        source = {**hand("a", 0.5, 0.5), "pose": None}
+        result = tracker.update([source], 0)
+        self.assertIsNone(result["pose"])
+        self.assertIsNone(result["hands"][0]["pose"])
 
     def test_short_dropout_holds_cursor_and_press_without_inventing_motion(self):
         tracker = pointer()

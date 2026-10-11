@@ -59,16 +59,31 @@ def image_geometry(landmarks, aspect_ratio):
 
 def pinch_ratios(landmarks, aspect_ratio):
     points = image_geometry(landmarks, aspect_ratio)
-    # 2D distances intentionally agree with what the presenter sees on screen.
-    palm = max(distance(points[0][:2], points[9][:2]), 1e-6)
+    # Wrist-to-knuckle alone collapses when the palm tilts toward the camera.
+    # Width supplies a second measured scale, while a bounded depth correction
+    # keeps a foreshortened palm usable without trusting noisy fingertip depth.
+    length = distance(points[0][:2], points[9][:2])
+    width = distance(points[5][:2], points[17][:2]) * 0.9
+    projected = max(length, width, 1e-6)
+    palm = max(projected, min(distance(points[0], points[9]), projected * 1.6))
+    # Fingertip contact is judged in the image: model-estimated tip depth often
+    # disagrees when the two tips occlude one another during a real pinch.
     return {name: distance(points[4][:2], points[tip][:2]) / palm for name, tip in TIPS.items()}
+
+
+def hand_pose(fingers, index_pinched=False):
+    """Discrete navigation poses; the thumb can rest against a folded finger."""
+    if index_pinched or not fingers.get("index") or fingers.get("ring") or fingers.get("pinky"):
+        return None
+    return "peace" if fingers.get("middle") else "point"
 
 
 @dataclass
 class PinchState:
-    on: float = 0.15
-    off: float = 0.25
-    debounce_ms: int = 50
+    on: float = 0.22
+    off: float = 0.34
+    debounce_ms: int = 40
+    release_ms: int = 80
     active: str | None = None
     candidate: str | None = None
     candidate_since: int = 0
@@ -85,16 +100,25 @@ class PinchState:
         if self.needs_release:
             self.active = self.candidate = None
             self.candidate_since = timestamp_ms
-            if all(ratio >= self.off for ratio in ratios.values()):
+            if ratios.get("index", float("inf")) >= self.off:
                 self.needs_release = False
             return {name: False for name in TIPS}
         possible = [name for name, ratio in ratios.items()
-                    if ratio < (self.off if name == self.active else self.on)]
-        selected = min(possible, key=lambda name: ratios[name]) if possible else None
+                    if ratio < (self.off if name == self.active else
+                                (self.on + self.off) / 2 if name == self.candidate else self.on)]
+        # An index contact owns the touch until it actually opens. Curled middle
+        # fingers near the thumb must not steal a drag or prevent its start.
+        if "index" in possible:
+            selected = "index"
+        elif self.active in possible:
+            selected = self.active
+        else:
+            selected = min(possible, key=lambda name: ratios[name]) if possible else None
         if selected != self.candidate:
             self.candidate = selected
             self.candidate_since = timestamp_ms
-        if selected != self.active and timestamp_ms - self.candidate_since >= self.debounce_ms:
+        delay = self.release_ms if self.active == "index" else self.debounce_ms
+        if selected != self.active and timestamp_ms - self.candidate_since >= delay:
             self.active = selected
         return {name: name == self.active for name in TIPS}
 
@@ -221,11 +245,15 @@ class HandEngine:
                 # A release while the hand was unseen is a cancellation, never a tap.
                 track.pinch.active = None
                 track.pinch.interrupt(timestamp_ms)
-            record = {"id": track.identity, "landmarks": landmarks, "fingers": finger_states(points),
-                      "pinches": track.pinch.update(ratios, timestamp_ms), "palm": track.palm[:],
+            fingers = finger_states(points)
+            pinches = track.pinch.update(ratios, timestamp_ms)
+            pose = hand_pose(fingers, pinches["index"] or ratios["index"] < track.pinch.on)
+            record = {"id": track.identity, "landmarks": landmarks, "fingers": fingers,
+                      "pinches": pinches, "palm": track.palm[:],
+                      "pose": pose, "pointing": pose == "point", "peace": pose == "peace",
                       "observed": True, "predicted": False, "tracking_source": "detected",
                       "tracking_age_ms": 0, "observation_timestamp": timestamp_ms,
-                      "pinch_released": all(ratio >= track.pinch.off for ratio in ratios.values()),
+                      "pinch_released": ratios["index"] >= track.pinch.off,
                       "reacquired": track.reacquired, "interaction_cancelled": cancelled}
             track.record = record
             hands.append(record)
@@ -236,5 +264,6 @@ class HandEngine:
                 # gestures, but retaining the identity prevents visual flicker.
                 hands.append({**track.record, "observed": False, "predicted": True,
                               "tracking_source": "held", "tracking_age_ms": age,
+                              "pose": None, "pointing": False, "peace": False,
                               "reacquired": False, "interaction_cancelled": False})
         return hands

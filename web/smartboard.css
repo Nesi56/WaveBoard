@@ -124,14 +124,51 @@ body[data-page="home"] .menu-toggle { display: none; }
 .workspace-menu {
   top: auto;
   bottom: 16px;
+  width: calc(100vw - 24px);
+  max-width: 840px;
+  overflow-x: hidden;
   border: 2px solid var(--line);
-  padding: 18px;
+  padding: 14px;
   background: #101e27;
   border-radius: 28px;
   box-shadow: 0 20px 70px #0006;
 }
 .menu-home, .menu-tool { color: var(--ink); }
 .menu-tool { background: var(--card); border: 2px solid var(--line); border-radius: 18px; }
+/* Every page shares the same menu sizing, including buttons made by the
+   generic button helper. Let labels wrap instead of escaping their cards. */
+.workspace-menu .menu-grid,
+.workspace-menu .menu-footer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+.workspace-menu .menu-tool {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  justify-content: start;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 72px;
+  height: auto;
+  padding: 12px 14px;
+  border-radius: 18px;
+  font-size: var(--control-size);
+  line-height: 1.25;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+.workspace-menu .menu-tool > span { min-width: 0; }
+.workspace-menu .menu-tool svg { width: 32px; height: 32px; }
+.workspace-menu .menu-note { margin: 0; padding: 12px 14px; }
+.workspace-menu .menu-header { min-height: 64px; }
+.workspace-menu .menu-home { min-width: 0; font-size: var(--control-size); }
+.large-ui .workspace-menu .menu-tool { font-size: 30px; }
 .menu-home:hover, .menu-tool:hover { background: #274352; }
 .menu-tool.active, .menu-tool[aria-pressed="true"],
 .menu-tool.active:hover, .menu-tool[aria-pressed="true"]:hover {
@@ -147,6 +184,46 @@ dialog:not(.hand-calibration) {
   box-shadow: 0 24px 80px #0008;
   padding: 20px;
 }
+/* Auto margins recenter asynchronous picker content inside the viewport.
+   Keep this untransformed: the dialog hosts a fixed, screen-space hand layer. */
+#dialog {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  transform: none;
+  margin: auto;
+  width: calc(100vw - 24px);
+  max-width: 780px;
+  height: max-content;
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+#dialog-content { min-width: 0; }
+#dialog .dialog-heading { gap: 12px; }
+#dialog .dialog-heading h2 { font-size: 30px; }
+#dialog .button {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: break-word;
+  text-align: center;
+}
+#dialog .button > span { min-width: 0; }
+#dialog .picker-roots {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+#dialog .picker-roots .button { justify-content: center; }
+/* Use one scroll surface for the picker. Nested height guesses otherwise
+   conceal the last rows when roots or a long path wrap on a 480p screen. */
+#dialog .picker-list { max-height: none; overflow: visible; }
+#dialog .picker-entry { line-height: 1.25; }
+#dialog .file-toolbar { min-width: 0; }
+#dialog .breadcrumb { min-width: 0; }
 dialog::backdrop { background: #030b12b3; }
 .dialog-heading { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .dialog-copy code, .text-preview { background: var(--card); color: var(--ink); }
@@ -214,6 +291,12 @@ body[data-projection-alignment="true"] .projection-status {
   .menu-toggle { bottom: 12px; right: 16px; }
   .workspace-footer { gap: 10px; }
   .workspace-menu { bottom: 12px; }
+}
+@media (max-width: 540px) {
+  .workspace-menu .menu-grid,
+  .workspace-menu .menu-footer,
+  #dialog .picker-roots { grid-template-columns: minmax(0, 1fr); }
+  #dialog { padding: 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
