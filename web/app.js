@@ -997,7 +997,7 @@ try {
 const activePointers = new Map();
 window.WaveBoardInput = Object.freeze({
   navigate,
-  pointer({ type, x, y, pointerId = 1 }) {
+  pointer({ type, x, y, pointerId = 1, isPrimary = pointerId === 1 }) {
     if (
       !["down", "move", "up", "cancel"].includes(type) ||
       !Number.isFinite(x) ||
@@ -1021,7 +1021,7 @@ window.WaveBoardInput = Object.freeze({
         clientY: y,
         pointerId,
         pointerType: "touch",
-        isPrimary: pointerId === 1,
+        isPrimary: Boolean(isPrimary),
         button: 0,
         buttons: type === "up" || type === "cancel" ? 0 : 1,
         pressure: type === "up" ? 0 : 0.5,

@@ -17,6 +17,9 @@ const GLIDE_MS = 30;
 const BONES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11],
   [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [0, 17], [17, 18], [18, 19], [19, 20]];
 const PALM = [0, 1, 5, 9, 13, 17];
+// Chromium gives the real mouse pointerId 1; a separate id keeps mouse movement
+// out of hand strokes. The hand is still the primary pointer.
+const HAND_POINTER_ID = 0x48414e44;
 const TIPS = new Set([4, 8, 12, 16, 20]);
 // The workspace palette (web/styles.css and the welcome slides).
 const DEEP = "#304b3b";
@@ -48,6 +51,10 @@ document.body.append(layer);
 const ctx = canvas.getContext("2d");
 
 let pressed = false;
+let pressHand = null;
+// A press may only start after the tracker has reported an open pinch, so a pinch
+// that failed to press (or was cancelled) cannot turn into a press somewhere else.
+let armed = true;
 let last = { x: 0, y: 0 };
 let lastSwipe = null;
 let lastFrameAt = 0;
@@ -55,11 +62,13 @@ const targets = new Map(); // hand id -> { points (CSS px), primary, pinch }
 const shown = new Map();   // hand id -> points currently drawn
 let painting = false;
 
-const input = (packet) => window.WaveBoardInput?.pointer({ ...packet, pointerId: 1 }) === true;
+const input = (packet) =>
+  window.WaveBoardInput?.pointer({ ...packet, pointerId: HAND_POINTER_ID, isPrimary: true }) === true;
 
 function release(type) {
   if (pressed) input({ type, x: last.x, y: last.y });
   pressed = false;
+  pressHand = null;
 }
 
 function hide() {
@@ -73,9 +82,18 @@ function arrowKey(key) {
   document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
 }
 
+function openModal() {
+  try {
+    return document.querySelector("dialog:modal");
+  } catch {
+    return document.querySelector("dialog[open]"); // browsers without :modal
+  }
+}
+
 function placeLayer() {
-  // Full-screen slides and open dialogs are drawn above everything else.
-  const host = document.fullscreenElement || document.querySelector("dialog[open]") || document.body;
+  // Modal dialogs, then full-screen elements, are drawn above everything else. A dialog
+  // opened during full screen is above the full-screen element, so it comes first.
+  const host = openModal() || document.fullscreenElement || document.body;
   if (layer.parentElement !== host) host.append(layer);
 }
 
@@ -96,14 +114,31 @@ function apply(pointer) {
     });
   }
   paintSoon();
-  last = { x: pointer.x * window.innerWidth, y: pointer.y * window.innerHeight };
+  if (pressed && pointer.hand !== pressHand) {
+    // The tracker switched to another hand mid-press (the pressing hand was missed for a
+    // frame). End the press where it was instead of dragging it to the other hand.
+    release("cancel");
+    armed = false;
+  }
+  // Keep the point on the page: x == innerWidth is outside it and would hit nothing.
+  last = {
+    x: Math.min(Math.max(pointer.x * window.innerWidth, 0), window.innerWidth - 1),
+    y: Math.min(Math.max(pointer.y * window.innerHeight, 0), window.innerHeight - 1),
+  };
   cursor.hidden = false;
   // The translate property (not transform) so the pressed-state scale cannot scale the position.
   cursor.style.translate = `${last.x}px ${last.y}px`;
   cursor.dataset.down = String(pointer.down);
-  if (pointer.down && !pressed) pressed = input({ type: "down", ...last });
-  else if (pointer.down) input({ type: "move", ...last });
-  else release("up");
+  if (!pointer.down) {
+    release("up");
+    armed = true;
+  } else if (pressed) {
+    input({ type: "move", ...last });
+  } else if (armed) {
+    armed = false;
+    pressed = input({ type: "down", ...last });
+    pressHand = pressed ? pointer.hand : null;
+  }
 }
 
 function paintSoon() {
@@ -149,9 +184,16 @@ function paint(now) {
   if (painting) requestAnimationFrame(paint);
 }
 
+// Joints and bones follow the hand's own size on screen: wrist to middle knuckle, or
+// across the knuckles when the palm is tilted. 80 px of palm is the reference size.
+function handScale(points) {
+  const length = (a, b) => Math.hypot(points[a][0] - points[b][0], points[a][1] - points[b][1]);
+  const palm = Math.max(length(0, 9), 1.3 * length(5, 17));
+  return Math.min(3, Math.max(0.35, palm / 80));
+}
+
 function drawHand(points, { primary, pinch }) {
-  // Sized for a 480p projector and scaled up on larger screens.
-  const unit = Math.max(0.75, Math.min(window.innerWidth, window.innerHeight) / 480);
+  const unit = handScale(points);
   ctx.save();
   ctx.globalAlpha = primary ? 1 : 0.55;
   ctx.lineCap = "round";
