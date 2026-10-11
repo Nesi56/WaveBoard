@@ -30,7 +30,8 @@ bash scripts/start-ubuntu.sh --hands
 ```
 
 The launcher opens the workspace in a Chromium kiosk window and starts hand
-tracking alongside it. Leave out `--hands` for mouse and touch only. To make
+tracking alongside it. Add `--firefox` to use Firefox instead (see
+[Using Firefox](#using-firefox)). Leave out `--hands` for mouse and touch only. To make
 canvases with your hands instead, run `python canvas_studio.py` in
 `gesture-lab/` (one app at a time can use the camera).
 
@@ -71,7 +72,7 @@ From the project directory, start the server:
 python -m waveboard
 ```
 
-Open **[http://127.0.0.1:8765](http://127.0.0.1:8765)** in Chrome, Edge, or Chromium. Leave the terminal running; use `Ctrl+C` to stop the server. This also works on Ubuntu using `python3 -m waveboard`.
+Open **[http://127.0.0.1:8765](http://127.0.0.1:8765)** in Chrome, Edge, Chromium, or Firefox. Leave the terminal running; use `Ctrl+C` to stop the server. This also works on Ubuntu using `python3 -m waveboard`.
 
 The Python server uses only the standard library. The browser's 3D libraries are included in `web/vendor`, so no Node installation, package build, CDN, or internet connection is required to run the workspace after setup. Python 3.10 or newer is recommended.
 
@@ -108,7 +109,7 @@ sudo apt update
 sudo apt install python3 libreoffice-impress poppler-utils
 ```
 
-Install a Chromium browser using the package method supported by your Ubuntu/JetPack distribution. The launcher looks for `chromium`, `chromium-browser`, then `google-chrome`. Keep the Jetson's graphics drivers and browser hardware acceleration enabled for the 3D space.
+Install a Chromium browser using the package method supported by your Ubuntu/JetPack distribution, or Firefox (see [Using Firefox](#using-firefox)). The launcher looks for `chromium`, `chromium-browser`, `google-chrome`, then `firefox`; `--firefox` picks Firefox first, and `WAVEBOARD_BROWSER=/path/to/browser` picks a specific binary. Keep the Jetson's graphics drivers and browser hardware acceleration enabled for the 3D space.
 
 To run in a normal browser tab:
 
@@ -124,9 +125,55 @@ cd /path/to/WaveBoard
 bash scripts/start-ubuntu.sh            # add --hands for camera hand control
 ```
 
-The launcher starts its own server, waits for it to respond, then opens a Chromium kiosk window. It keeps a separate browser profile under `${XDG_CACHE_HOME:-$HOME/.cache}/waveboard/chromium-profile` and server output in the adjacent `server.log`. With `--hands` it also starts `gesture-lab/server.py` using `WAVEBOARD_HANDS_PYTHON` (default `~/vision-env/bin/python`) and logs to `hands.log` in the same folder. Close the kiosk with `Alt+F4`; the launcher then stops the server and tracker it started. It does not terminate other Python services or browser processes, install an autostart entry, or change system settings.
+The launcher starts its own server, waits for it to respond, then opens a kiosk window. It keeps a separate browser profile under `${XDG_CACHE_HOME:-$HOME/.cache}/waveboard/` (`chromium-profile` or `firefox-profile`) and server output in the adjacent `server.log`. A snap browser cannot use that hidden folder, so for a snap the profile goes in `~/snap/<name>/common/waveboard-profile` instead. With `--hands` it also starts `gesture-lab/server.py` using `WAVEBOARD_HANDS_PYTHON` (default `~/vision-env/bin/python`) and logs to `hands.log` in the same folder. Close the kiosk with `Alt+F4`; the launcher then stops the server and tracker it started. It does not terminate other Python services or browser processes, install an autostart entry, or change system settings.
 
 An optional desktop-launcher template is provided at [`scripts/waveboard.desktop.example`](scripts/waveboard.desktop.example). Edit its two absolute paths before installing it manually through your desktop environment. Nothing is installed automatically.
+
+### Using Firefox
+
+```bash
+bash scripts/start-ubuntu.sh --firefox --hands
+```
+
+Firefox runs as its own kiosk instance with a separate profile, so it does not touch
+the Firefox you use day to day, and closing the kiosk (`Alt+F4`) stops WaveBoard. Before
+each launch the script writes a `user.js` into that profile that turns off welcome,
+default-browser and privacy pages, session restore and the fullscreen warning, lets
+videos start from hand input, and keeps the hand cursor's connection retrying quickly.
+It also sets `MOZ_USE_XINPUT2=1` so a touchscreen sends real touch input on the
+Jetson's X11 desktop.
+
+On a Jetson, install Firefox from Mozilla's APT repository rather than the snap that
+Ubuntu 22.04 provides. On JetPack 6, snap browsers have been reported to fail to start
+after snapd updates, and they cannot use the Jetson's GPU libraries, so they render in
+software. Mozilla publishes arm64 builds from Firefox 136 on:
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+wget -q https://packages.mozilla.org/apt/repo-signing-key.gpg -O- | sudo tee /etc/apt/keyrings/packages.mozilla.org.asc >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main" | sudo tee /etc/apt/sources.list.d/mozilla.list >/dev/null
+printf 'Package: *\nPin: origin packages.mozilla.org\nPin-Priority: 1000\n' | sudo tee /etc/apt/preferences.d/mozilla >/dev/null
+sudo apt-get update && sudo apt-get install firefox
+apt-cache policy firefox   # the installed version should come from packages.mozilla.org
+```
+
+If the snap is still installed (`snap list firefox`), remove it with `sudo snap remove firefox`
+first. The launcher still works with a snap Firefox, and prints a note when it finds one.
+
+Firefox differences to know about:
+
+- **H.264 video (.mp4):** Firefox plays it through the system FFmpeg. If MP4 files show
+  "Cannot play this video", run `sudo apt install libavcodec58`; the launcher prints this
+  hint when the library is missing. WebM always works. Firefox decodes video on the CPU on
+  a Jetson, so prefer 1080p or lower.
+- **MKV files** do not play in Firefox; convert them to MP4 or WebM.
+- **3D:** if the 3D studio says graphics are unavailable, open `about:support` in a normal
+  Firefox window and check that WebGL 2 is enabled with the NVIDIA Tegra renderer.
+- Like Chromium, Firefox only opens the file picker and goes full screen from a real
+  mouse, touch or key press, not from hand input; the kiosk window is already full screen.
+
+Hand control, drawing, Home cards and slides were tested end to end in Firefox 136 with
+the same checks as Chromium, and the launcher was run with a real Firefox.
 
 ## File locations and server options
 

@@ -81,7 +81,7 @@ export async function createModelViewer(container, options = {}) {
   try {
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'low-power' });
   } catch {
-    throw new Error('3D graphics are unavailable. Enable hardware acceleration in Chromium and try again.');
+    throw new Error('3D graphics are unavailable. Enable hardware acceleration in your browser and try again.');
   }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
   renderer.outputColorSpace = THREE.SRGBColorSpace;

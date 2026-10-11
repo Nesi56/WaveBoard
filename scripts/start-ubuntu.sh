@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Start WaveBoard's local Python service and an isolated Chromium kiosk window.
+# Start WaveBoard's local Python service and an isolated browser kiosk window
+# (Chromium, Google Chrome or Firefox).
 set -Eeuo pipefail
 
 waveboard_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,13 +10,16 @@ waveboard_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/waveboard"
 waveboard_server_pid=""
 waveboard_hands=0
 waveboard_hands_pid=""
+waveboard_firefox=0
 waveboard_extra_args=()
 
 usage() {
-  printf 'Usage: bash scripts/start-ubuntu.sh [--hands] [--root /path/to/files]...\n'
+  printf 'Usage: bash scripts/start-ubuntu.sh [--hands] [--firefox] [--root /path/to/files]...\n'
   printf 'Set WAVEBOARD_PORT to change the default local port (8765).\n'
   printf -- '--hands also starts camera hand control (gesture-lab/server.py) with\n'
   printf 'WAVEBOARD_HANDS_PYTHON, default ~/vision-env/bin/python.\n'
+  printf -- '--firefox uses Firefox instead of Chromium. WAVEBOARD_BROWSER=/path/to/browser\n'
+  printf 'picks a specific Chromium-family or Firefox binary.\n'
 }
 
 while (($#)); do
@@ -30,6 +34,10 @@ while (($#)); do
       ;;
     --hands)
       waveboard_hands=1
+      shift
+      ;;
+    --firefox)
+      waveboard_firefox=1
       shift
       ;;
     -h|--help)
@@ -55,16 +63,60 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-waveboard_browser=""
-for waveboard_candidate in chromium chromium-browser google-chrome; do
-  if command -v "$waveboard_candidate" >/dev/null 2>&1; then
-    waveboard_browser="$(command -v "$waveboard_candidate")"
-    break
+waveboard_find_browser() {
+  local candidate
+  for candidate in "$@"; do
+    if command -v -- "$candidate" >/dev/null 2>&1; then
+      command -v -- "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Prints the snap's name when the browser is a snap: /snap/bin/NAME links to
+# /usr/bin/snap, and Ubuntu 22.04's /usr/bin/firefox and /usr/bin/chromium-browser
+# are small scripts that run /snap/bin/NAME.
+waveboard_snap_name() {
+  local real
+  real="$(readlink -f -- "$1")"
+  case "$real" in
+    /usr/bin/snap|/snap/*)
+      basename -- "$1"
+      return 0
+      ;;
+  esac
+  if [[ -f "$real" && "$(head -c 2 -- "$real" 2>/dev/null)" == '#!' ]]; then
+    sed -n 's#.*/snap/bin/\([A-Za-z0-9-]*\).*#\1#p' -- "$real" | head -n 1 | grep .
+    return
   fi
-done
-if [[ -z "$waveboard_browser" ]]; then
-  printf 'Install Chromium or Google Chrome using your Ubuntu distribution packages, then try again.\n' >&2
+  return 1
+}
+
+if [[ -n "${WAVEBOARD_BROWSER:-}" ]]; then
+  if ! waveboard_browser="$(waveboard_find_browser "$WAVEBOARD_BROWSER")"; then
+    printf 'WAVEBOARD_BROWSER=%s was not found.\n' "$WAVEBOARD_BROWSER" >&2
+    exit 1
+  fi
+elif ((waveboard_firefox)); then
+  if ! waveboard_browser="$(waveboard_find_browser firefox firefox-esr)"; then
+    printf 'Firefox was not found. Install it from Mozilla'"'"'s APT repository (see README.md), then try again.\n' >&2
+    exit 1
+  fi
+elif ! waveboard_browser="$(waveboard_find_browser chromium chromium-browser google-chrome firefox firefox-esr)"; then
+  printf 'Install Chromium, Google Chrome or Firefox, then try again.\n' >&2
   exit 1
+fi
+waveboard_browser_kind=chromium
+if [[ "$(basename -- "$waveboard_browser")" == *firefox* ]]; then
+  waveboard_browser_kind=firefox
+fi
+# A snap browser cannot use hidden folders such as ~/.cache, only its own ~/snap/NAME.
+if waveboard_snap="$(waveboard_snap_name "$waveboard_browser")"; then
+  waveboard_profile="$HOME/snap/$waveboard_snap/common/waveboard-profile"
+else
+  waveboard_snap=""
+  waveboard_profile="$waveboard_cache_dir/$waveboard_browser_kind-profile"
 fi
 
 mkdir -p -- "$waveboard_cache_dir"
@@ -83,6 +135,40 @@ except OSError as error:
     print("Close the existing server or select another WAVEBOARD_PORT.", file=sys.stderr)
     raise SystemExit(1)
 PY
+
+# Rewritten on every launch: no welcome, default-browser or privacy pages, no session
+# restore, quick WebSocket reconnects for the hand cursor, no fullscreen warning, and
+# videos that may start from hand input.
+waveboard_firefox_prefs() {
+  cat <<'PREFS'
+// Written by scripts/start-ubuntu.sh before every launch; edits here are replaced.
+user_pref("browser.aboutwelcome.enabled", false);
+user_pref("browser.preonboarding.enabled", false);
+user_pref("browser.startup.homepage_override.mstone", "ignore");
+user_pref("startup.homepage_welcome_url", "");
+user_pref("startup.homepage_welcome_url.additional", "");
+user_pref("startup.homepage_override_url", "");
+user_pref("browser.startup.upgradeDialog.enabled", false);
+user_pref("browser.shell.checkDefaultBrowser", false);
+user_pref("datareporting.policy.dataSubmissionPolicyBypassNotification", true);
+user_pref("datareporting.policy.dataSubmissionEnabled", false);
+user_pref("datareporting.policy.firstRunURL", "");
+user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);
+user_pref("termsofuse.bypassNotification", true);
+user_pref("browser.sessionstore.resume_from_crash", false);
+user_pref("toolkit.startup.max_resumed_crashes", -1);
+user_pref("browser.warnOnQuit", false);
+user_pref("browser.translations.automaticallyPopup", false);
+user_pref("app.update.auto", false);
+user_pref("network.websocket.delay-failed-reconnects", false);
+user_pref("full-screen-api.warning.timeout", 0);
+user_pref("full-screen-api.transition-duration.enter", "0 0");
+user_pref("full-screen-api.transition-duration.leave", "0 0");
+user_pref("media.autoplay.default", 0);
+user_pref("media.autoplay.blocking_policy", 0);
+user_pref("media.videocontrols.picture-in-picture.video-toggle.enabled", false);
+PREFS
+}
 
 waveboard_cleanup() {
   local pid
@@ -142,10 +228,32 @@ if ((waveboard_hands)); then
   waveboard_hands_pid=$!
   printf 'Hand control is starting. If no cursor appears, check %s/hands.log\n' "$waveboard_cache_dir"
 fi
+
+mkdir -p -- "$waveboard_profile"
+if [[ -n "$waveboard_snap" ]]; then
+  printf 'Note: %s is a snap. On JetPack 6 snap browsers may fail to start and cannot use the GPU;\n' "$waveboard_snap"
+  printf 'Firefox from Mozilla'"'"'s APT repository avoids both (see README.md).\n'
+fi
 printf 'Close the kiosk window (Alt+F4) to stop this launcher and its local server.\n'
-"$waveboard_browser" \
-  --kiosk \
-  --no-first-run \
-  --no-default-browser-check \
-  --user-data-dir="$waveboard_cache_dir/chromium-profile" \
-  "$waveboard_url"
+if [[ "$waveboard_browser_kind" == firefox ]]; then
+  waveboard_firefox_prefs >"$waveboard_profile/user.js"
+  if [[ -z "$waveboard_snap" ]] && ! { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null; } | grep -q 'libavcodec\.so'; then
+    printf 'Note: Firefox needs FFmpeg for H.264 (.mp4) videos: sudo apt install libavcodec58\n'
+  fi
+  # --new-instance and a separate profile keep this window apart from any open Firefox,
+  # so the command blocks until the kiosk closes. MOZ_USE_XINPUT2 makes Firefox read
+  # touchscreens as touch on X11, which JetPack's desktop uses.
+  MOZ_USE_XINPUT2=1 "$waveboard_browser" \
+    --kiosk \
+    --new-instance \
+    --no-remote \
+    --profile "$waveboard_profile" \
+    "$waveboard_url"
+else
+  "$waveboard_browser" \
+    --kiosk \
+    --no-first-run \
+    --no-default-browser-check \
+    --user-data-dir="$waveboard_profile" \
+    "$waveboard_url"
+fi
