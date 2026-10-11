@@ -1,145 +1,76 @@
 # WaveBoard
 
-An all-in-one portable projector for teaching where there is no smartboard: an
-NVIDIA Jetson running Ubuntu, a webcam and a projector. Presenters control it
-with their hands, with no headset or touch surface needed. Everything runs on the
-device without an internet connection.
+WaveBoard is an offline desktop app for an NVIDIA Jetson, webcam, and projector.
+Open **WaveBoard** from the Jetson's Applications menu to draw, explore 3D models,
+browse device and USB files, play videos, and present PowerPoint or PDF slides.
+Hand tracking turns pinches into taps and drags, with hand skeletons drawn over
+the workspace. Camera images are not uploaded or recorded.
 
-The repository has two parts that work together:
+## A local app, with no hosting
 
-- **The workspace** (`waveboard/`, `web/`): a touch-friendly projector interface
-  with Draw, 3D, Files, Video and Slides (PowerPoint and PDF). It is designed
-  around a 480p projector: large controls, short labels, and one task on screen
-  at a time. Python serves the machine's files and presentation conversions; a
-  local browser displays the menu and utilities.
-- **Hand tracking** (`gesture-lab/`): MediaPipe tracks two hands from the webcam
-  and the workspace draws them as skeletons over whatever is on screen. Pinch to
-  tap and drag, swipe an open palm to change cards and slides. The camera image is
-  never shown. See [gesture-lab/README.md](gesture-lab/README.md).
+The normal launcher opens a Qt desktop window. Its bundled HTML/JavaScript interface
+is rendered inside the application, rather than in a separately launched browser.
+Local resources use an internal `waveboard://app` address. This is a resource identifier,
+not a network service: no HTTP server or WebSocket server is started and no network
+port is opened by the workspace or tracker. File operations call Python directly
+through Qt's in-process WebChannel. Hand tracking runs as an app-managed camera worker
+and sends JSON through a process pipe. Closing the app stops that worker.
 
-## Set up on the Jetson
+The desktop window blocks remote resource requests. Libraries, examples, and the
+hand model are stored on the device. Internet is needed only for initial installation.
 
-You need a Jetson Orin Nano with JetPack 6 (Ubuntu 22.04) and its desktop, a USB webcam,
-a projector on the Jetson's display output, and internet for the first setup only.
+## Install once on the Jetson
 
-1. **Install the system packages and get WaveBoard**
+If using a downloaded source archive, extract its `WaveBoard` folder and skip the
+`git clone` command below. Run the installer from that extracted folder.
 
-   ```bash
-   sudo apt update
-   sudo apt install git python3-venv python3-pip libreoffice-impress poppler-utils
-   git clone https://github.com/Nesi56/WaveBoard.git ~/WaveBoard
-   ```
-
-   You also need a browser. On JetPack 6, install Firefox from Mozilla's APT repository
-   ([Using Firefox](#using-firefox)); snap browsers can fail to start there. If Chromium
-   already works on your Jetson, you can use it instead.
-
-2. **Set up hand tracking** (once; it downloads MediaPipe and the hand model, a few minutes)
-
-   ```bash
-   cd ~/WaveBoard
-   bash gesture-lab/setup.sh
-   ```
-
-   This creates the Python environment `~/vision-env` with MediaPipe and OpenCV. If you
-   already have a `~/vision-env` that runs MediaPipe, it keeps your versions. When it
-   finishes it prints the command that starts WaveBoard.
-
-3. **Connect the camera and projector.** Set the Jetson to its highest power mode (power
-   menu in the top bar) and run `sudo jetson_clocks` for the best tracking speed. Put the
-   camera facing where the presenter stands, about chest height, with the whole hand in
-   view; even light on the hands helps most. More in
-   [gesture-lab/README.md](gesture-lab/README.md#getting-the-most-accurate-tracking).
-
-4. **Start WaveBoard**
-
-   ```bash
-   cd ~/WaveBoard
-   bash scripts/start-ubuntu.sh --hands --firefox   # leave out --firefox to use Chromium
-   ```
-
-   The workspace opens full screen on the projector with hand tracking running. Hold up a
-   hand: its skeleton appears, and a quick thumb + index pinch taps. Close with `Alt+F4`,
-   which also stops tracking. Leave out `--hands` for mouse and touch only.
-
-If no skeleton appears, read `~/.cache/waveboard/hands.log`. With several cameras, pick one
-with `WAVEBOARD_HANDS_ARGS="--camera /dev/video2" bash scripts/start-ubuntu.sh --hands`
-(`v4l2-ctl --list-devices` lists them). To start WaveBoard from the desktop, see
-[`scripts/waveboard.desktop.example`](scripts/waveboard.desktop.example).
-
-## Controlling the workspace with your hands
-
-Stand facing the camera with your hands in view. Each hand appears as a skeleton
-over the workspace, in its green-on-paper colours (a second hand is drawn lighter),
-and a round cursor sits between the thumb and index fingertips of the main hand.
-
-| Gesture | Works like |
-| --- | --- |
-| Hand in view | Skeleton on screen; moves the cursor |
-| Quick thumb + index pinch | A tap: open a card, press a button, pick a colour |
-| Pinch, move, release | Touch and drag: draw on the board, orbit a 3D model |
-| Open palm swiped left / right | Arrow keys: next / previous Home card or slide |
-
-Small wobbles during a pinch are ignored so that taps land where you aimed;
-move further and the pinch becomes a drag. The tracker ignores a band around
-the camera's edges (`--reach`, default 12%) so the cursor can reach the screen
-edges without your hand leaving the camera's view. For the most accurate tracking
-(camera placement, light, standing farther back) see
-[gesture-lab/README.md](gesture-lab/README.md#getting-the-most-accurate-tracking).
-
-To run the two halves by hand instead of with the launcher, start
-`python3 -m waveboard` in one terminal and `python gesture-lab/server.py` (in
-`vision-env`) in another, then open http://localhost:8765. Everything stays on this
-computer: the workspace uses **localhost:8765** and the hand-tracking stream
-**localhost:8766**, and neither can be reached from the network. If you move the workspace
-to another port, start the tracker with `--allow-origin http://localhost:PORT` (the
-launcher does this for you).
-
-Hand input reaches the page as synthetic pointer events, which browsers do not
-treat as a real user gesture. **Full screen** and **Present** therefore need the
-kiosk window (already full screen), F11, or a mouse click; native video controls and
-drop-down menus need a mouse, as described in
-[Connecting other trackers](#connecting-other-trackers).
-
-## Try it on another computer
-
-The workspace runs on Windows, macOS and Linux with Python 3.10 or newer. From the
-WaveBoard folder:
+Target: Jetson Orin Nano with JetPack 6 / Ubuntu 22.04, a desktop session, USB webcam,
+and a projector connected to the display output. Run these commands as your normal
+Jetson desktop user, not from a root shell:
 
 ```bash
-python -m waveboard       # python3 on macOS and Linux
+git clone https://github.com/Nesi56/WaveBoard.git ~/WaveBoard
+cd ~/WaveBoard
+bash scripts/install-jetson.sh
 ```
 
-Then open **[http://localhost:8765](http://localhost:8765)** in Chrome, Edge, Chromium or
-Firefox. Open that address, not `web/index.html` from the file manager: the page needs the
-server. Leave the terminal running; `Ctrl+C` stops the server.
+For an existing checkout, update it first and run the same installation script.
+The script asks for sudo to install Ubuntu's Qt desktop bindings, LibreOffice Impress,
+Poppler, and Python environment tools. It prepares the hand tracker and model,
+then installs a **WaveBoard** entry in your user's Applications menu. It leaves
+this checkout in place; do not move or delete it after installing the launcher.
+Qt is installed using Ubuntu packages so it works with JetPack's ARM64 runtime.
+There is no Node build, cloud account, web hosting, or browser installation step.
 
-The Python server uses only the standard library. The browser's 3D libraries are included in `web/vendor`, so no Node installation, package build, CDN, or internet connection is required to run the workspace after setup.
+## Use it
 
-To try hand tracking with the computer's webcam, set it up once, then run the tracker in a
-second terminal next to `python -m waveboard`. Close other apps that use the camera first.
+1. Connect the webcam and projector.
+2. Open **WaveBoard** from Applications.
+3. Hold up a hand. Pinch thumb and index to tap; hold a pinch and move to drag.
+   Swipe an open palm to browse Home cards or slides.
+4. Close with **Alt+F4** or **Ctrl+Q**. **F11** toggles the full screen window.
 
-On Windows (PowerShell):
-
-```powershell
-py -m venv .venv
-.venv\Scripts\python -m pip install mediapipe "websockets>=14,<18"
-.venv\Scripts\python gesture-lab\download_model.py
-.venv\Scripts\python gesture-lab\server.py      # each time, in a second terminal
-```
-
-On macOS or Linux:
+For a camera-free launch or a normal-sized window:
 
 ```bash
-bash gesture-lab/setup.sh
-~/vision-env/bin/python gesture-lab/server.py      # each time, in a second terminal
+cd ~/WaveBoard
+bash scripts/start-ubuntu.sh --no-hands --windowed
 ```
 
-On a Linux desktop, `bash scripts/start-ubuntu.sh --hands` starts both instead. On macOS,
-allow the terminal to use the camera when asked (System Settings → Privacy & Security →
-Camera). An open page finds the tracker by itself within a few seconds.
+You can also launch with `/usr/bin/python3 -m waveboard` from the repository root.
+No terminal needs to remain open when using the Applications entry. Hand tracking
+starts automatically when `~/vision-env/bin/python` exists; missing setup produces
+an explanation and the app remains usable with mouse and touch.
 
-For a quick tour, use the Home arrows to find **Files**, tap its card, then choose **Location → Demo files**. The repository includes `welcome.pdf`, `waveboard-demo.webm`, and `wave-sculpture.glb` / `wave-sculpture.obj` to try the presentation, video, and model viewers.
+For a different tracker environment or camera:
+
+```bash
+WAVEBOARD_HANDS_PYTHON=/path/to/vision-env/bin/python bash scripts/start-ubuntu.sh
+WAVEBOARD_HANDS_ARGS="--camera /dev/video2" bash scripts/start-ubuntu.sh
+```
+
+Point the camera toward the presenter at chest height, with even lighting and the
+whole hand in view. See [hand tracking](gesture-lab/README.md) for tuning.
 
 ## Projector controls
 
@@ -163,174 +94,47 @@ Tap opens controls and items; press and hold exposes details where offered. Draw
 
 The whiteboard stores its drawing in the current browser profile using `localStorage`, with a bounded save size. Export a PNG to keep a separate copy. Browser storage is specific to the browser profile and site address: the kiosk profile and your normal desktop browser have separate drawings, as do different ports.
 
-## Install on Ubuntu / Jetson
+## Troubleshooting
 
-Install the Python runtime and the optional presentation tools:
+- **Missing desktop runtime:** `sudo apt install python3-pyqt5.qtwebengine python3-pyqt5.qtwebchannel`.
+  The launcher uses `/usr/bin/python3` to see Ubuntu's Qt packages, separately from the
+  MediaPipe environment. Set `WAVEBOARD_DESKTOP_PYTHON` only if using another Python
+  with the Qt bindings installed.
+- **No hand skeleton:** run `bash gesture-lab/setup.sh`, close other camera apps, and
+  reopen WaveBoard. Camera diagnostics are written to `/tmp/waveboard-hands.log`.
+- **Slides unavailable:** install `libreoffice-impress` and `poppler-utils`. Conversion
+  happens on the Jetson. PowerPoint animations are rendered as static slides.
+- **Browser profile:** the desktop app keeps its own persistent Qt profile under the
+  user's Qt application-data directory. Drawings from the former browser launcher
+  do not automatically transfer; export them as PNG from that browser if needed.
 
-```bash
-sudo apt update
-sudo apt install python3 libreoffice-impress poppler-utils
-```
-
-Install a Chromium browser using the package method supported by your Ubuntu/JetPack distribution, or Firefox (see [Using Firefox](#using-firefox)). The launcher looks for `chromium`, `chromium-browser`, `google-chrome`, then `firefox`; `--firefox` picks Firefox first, and `WAVEBOARD_BROWSER=/path/to/browser` picks a specific binary. Keep the Jetson's graphics drivers and browser hardware acceleration enabled for the 3D space.
-
-To run in a normal browser tab:
-
-```bash
-cd /path/to/WaveBoard
-python3 -m waveboard
-```
-
-To launch the projector interface in kiosk mode:
+## Development and verification
 
 ```bash
-cd /path/to/WaveBoard
-bash scripts/start-ubuntu.sh            # add --hands for camera hand control
+python3 -m unittest discover -s tests -v
+# Legacy bridge tests need: python3 -m pip install 'websockets>=14,<18'
+(cd gesture-lab && python3 -m unittest discover -s tests -v)
 ```
 
-The launcher starts its own server, waits for it to respond, then opens a kiosk window. It keeps a separate browser profile under `${XDG_CACHE_HOME:-$HOME/.cache}/waveboard/` (`chromium-profile` or `firefox-profile`) and server output in the adjacent `server.log`. A snap browser cannot use that hidden folder, so for a snap the profile goes in `~/snap/<name>/common/waveboard-profile` instead. With `--hands` it also starts `gesture-lab/server.py` using `WAVEBOARD_HANDS_PYTHON` (default `~/vision-env/bin/python`) and logs to `hands.log` in the same folder. Close the kiosk with `Alt+F4`; the launcher then stops the server and tracker it started. It does not terminate other Python services or browser processes, install an autostart entry, or change system settings.
+Tests cover direct local operations, path confinement, duplicate/failed imports,
+presentation conversion, and the retained legacy HTTP helpers. The default app does
+not use those HTTP helpers or `gesture-lab/server.py`; they remain for existing
+integration tests and older development integrations.
 
-An optional desktop-launcher template is provided at [`scripts/waveboard.desktop.example`](scripts/waveboard.desktop.example). Edit its two absolute paths before installing it manually through your desktop environment. Nothing is installed automatically.
-
-### Using Firefox
-
-```bash
-bash scripts/start-ubuntu.sh --firefox --hands
-```
-
-Firefox runs as its own kiosk instance with a separate profile, so it does not touch
-the Firefox you use day to day, and closing the kiosk (`Alt+F4`) stops WaveBoard. Before
-each launch the script writes a `user.js` into that profile that turns off welcome,
-default-browser and privacy pages, session restore and the fullscreen warning, lets
-videos start from hand input, and keeps the hand cursor's connection retrying quickly.
-It also sets `MOZ_USE_XINPUT2=1` so a touchscreen sends real touch input on the
-Jetson's X11 desktop.
-
-On a Jetson, install Firefox from Mozilla's APT repository rather than the snap that
-Ubuntu 22.04 provides. On JetPack 6, snap browsers have been reported to fail to start
-after snapd updates, and they cannot use the Jetson's GPU libraries, so they render in
-software. Mozilla publishes arm64 builds from Firefox 136 on:
-
-```bash
-sudo install -d -m 0755 /etc/apt/keyrings
-wget -q https://packages.mozilla.org/apt/repo-signing-key.gpg -O- | sudo tee /etc/apt/keyrings/packages.mozilla.org.asc >/dev/null
-echo "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main" | sudo tee /etc/apt/sources.list.d/mozilla.list >/dev/null
-printf 'Package: *\nPin: origin packages.mozilla.org\nPin-Priority: 1000\n' | sudo tee /etc/apt/preferences.d/mozilla >/dev/null
-sudo apt-get update && sudo apt-get install firefox
-apt-cache policy firefox   # the installed version should come from packages.mozilla.org
-```
-
-If the snap is still installed (`snap list firefox`), remove it with `sudo snap remove firefox`
-first. The launcher still works with a snap Firefox, and prints a note when it finds one.
-
-Firefox differences to know about:
-
-- **H.264 video (.mp4):** Firefox plays it through the system FFmpeg. If MP4 files show
-  "Cannot play this video", run `sudo apt install libavcodec58`; the launcher prints this
-  hint when the library is missing. WebM always works. Firefox decodes video on the CPU on
-  a Jetson, so prefer 1080p or lower.
-- **MKV files** do not play in Firefox; convert them to MP4 or WebM.
-- **3D:** if the 3D studio says graphics are unavailable, open `about:support` in a normal
-  Firefox window and check that WebGL 2 is enabled with the NVIDIA Tegra renderer.
-- Like Chromium, Firefox only opens the file picker and goes full screen from a real
-  mouse, touch or key press, not from hand input; the kiosk window is already full screen.
-
-Hand control, drawing, Home cards and slides were tested end to end in Firefox 136 with
-the same checks as Chromium, and the launcher was run with a real Firefox.
-
-## File locations and server options
-
-By default, **This device** opens the current user's home directory. Mounted USB drives are discovered on Ubuntu beneath common locations such as `/media/<user>`, `/run/media/<user>`, `/media`, and `/mnt`. Use the desktop or operating system to mount and safely eject a drive; WaveBoard browses drives that are already mounted. Bundled **Demo files** are a separate location.
-
-Use `--root` to replace the default home/USB locations with selected folders; repeat it to expose multiple folders. The demo location remains available.
-
-```bash
-python3 -m waveboard --root "$HOME/Documents" --root /media/yourname/USB
-```
-
-The server's command-line options are:
-
-```text
-python3 -m waveboard [--host localhost] [--port 8765] [--root DIRECTORY]...
-```
-
-The kiosk launcher accepts repeated `--root` arguments. Set its port through `WAVEBOARD_PORT`:
-
-```bash
-WAVEBOARD_PORT=8770 bash scripts/start-ubuntu.sh --root "$HOME/Documents"
-```
-
-Keep the default loopback host for the standalone projector. The server provides access to local files and is intended to run on the same machine as the browser, without a network-facing login system.
-
-## Supported formats and practical limits
-
-**3D:** GLB, OBJ, and STL are supported as single-file imports. Use a GLB with embedded textures and buffers when you need a textured model. Separate OBJ material/texture files and externally referenced model assets are not loaded. Compressed glTF extensions that need additional decoders are not supported. Rendering depends on the Jetson's browser/WebGL support and the size of the model; start with lightweight models.
-
-**Video:** MP4 with H.264 video and WebM are useful starting formats, but the exact video/audio codecs supported depend on the browser and operating-system build. A `.mp4` extension alone does not guarantee playback. Try a representative file on the actual Jetson before using it in a session. See [MDN's media container and codec guide](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/Containers).
-
-**PowerPoint and PDF:** PPTX/PPT files are converted by LibreOffice to PDF; Poppler renders the pages for slide navigation. PDF files use Poppler directly. Slides are static images: PowerPoint animations, transitions, embedded videos, interactive objects, and presenter notes are not played. Fonts and layout can differ from Microsoft PowerPoint; install the presentation's fonts on the Jetson and review the rendered slides. Conversion is limited to 250 MB per presentation and up to 200 rendered pages. See [LibreOffice's command-line parameter documentation](https://help.libreoffice.org/latest/en-GB/text/shared/guide/start_parameters.html).
-
-On Windows, the menu, file browser, whiteboard, 3D space, and supported videos can be previewed with Python and a browser. Presentation conversion additionally requires the LibreOffice (`libreoffice` or `soffice`) and Poppler (`pdftoppm`) executables on `PATH`. Without those tools the app reports that conversion is unavailable; installing the Ubuntu dependencies on the Jetson enables that feature there.
-
-## Connecting other trackers
-
-Hand tracking from `gesture-lab/` is already connected: `web/hands.js` receives
-the tracker's pointer over a local WebSocket (`ws://localhost:8766`, or the port in
-the page's `?hands-port=` parameter) and calls the bridge below. Another tracker
-can use the same bridge, or emit OS input instead.
-
-The simplest integration is for the tracking process to emit normal OS mouse or touch input. Map a finger touching the projected surface to pointer-down, movement to pointer-move, and lifting the finger to pointer-up. Calibrate camera/projector coordinates into screen coordinates in the tracking process. A held touch should continue the same pointer rather than repeatedly clicking.
-
-The app also implements a small browser bridge for connecting the tracker. The available page IDs are `home`, `whiteboard`, `models`, `files`, `video`, and `slides`:
-
-```javascript
-window.WaveBoardInput.navigate('whiteboard');
-window.WaveBoardInput.pointer({ type: 'down', x: 600, y: 350, pointerId: 7, isPrimary: true });
-window.WaveBoardInput.pointer({ type: 'move', x: 650, y: 390, pointerId: 7, isPrimary: true });
-window.WaveBoardInput.pointer({ type: 'up', x: 650, y: 390, pointerId: 7, isPrimary: true });
-// Use type: 'cancel' if the tracker loses the active finger.
-```
-
-Coordinates are viewport/client coordinates in CSS pixels, measured from the visible browser content's top-left corner. Convert camera coordinates into this space without multiplying by the device pixel ratio. Use a consistent `pointerId` throughout one contact. `pointerId` defaults to `1`, which Chromium also gives the real mouse, so a camera tracker should use another number and pass `isPrimary: true` for its main finger, as `web/hands.js` does; otherwise mouse movement joins the tracker's strokes.
-
-The synthetic bridge supports drawing on the canvas, 3D interactions, buttons, and checkboxes. Use OS mouse/touch input for native media controls, select menus, and text interactions.
-
-## Verification
-
-Run the Python backend checks from the project directory, and the hand-tracking
-checks from `gesture-lab/` in the environment with MediaPipe and OpenCV:
-
-```bash
-python -m unittest discover -s tests -v
-cd gesture-lab && python -m unittest discover -s tests -v
-```
-
-Hand control of the workspace was checked end to end in headless Chromium and
-Firefox 136: synthetic hands went through the real tracker bridge and `web/hands.js`
-into this interface. A pinch-tap changed Home cards and opened the board, a pinch-drag
-drew a stroke, open-palm swipes changed cards and slides, and the cursor hid when the
-hand left. Separately, a recorded photo of two hands went through the real tracker
-(MediaPipe) to the workspace, which drew both skeletons on Home, the whiteboard and
-slides. The kiosk launcher with `--hands` was run with a stand-in browser: it started
-both servers, the bridge accepted the page and refused another origin, and both
-servers stopped afterwards. Live camera tracking still needs testing on the Jetson.
-
-The bundled demo PDF, WebM video, and GLB/OBJ models have been exercised in the Windows browser preview. Real PDF rendering through Poppler has also been verified on Windows. LibreOffice is unavailable in this development environment, so real PPT/PPTX conversion still needs verification on the target machine. The Ubuntu launcher has passed Bash syntax checking; kiosk operation, USB mounting, graphics performance, and video codecs need a run on the actual Jetson.
+Desktop startup and the local bridge have been tested on a Linux desktop. Jetson
+camera capture, GPU acceleration, projector output, and device-specific video codecs
+still require verification on the target hardware.
 
 ## Project structure
 
 ```text
-waveboard/server.py       Local HTTP server, file access, video ranges, slide conversion
-waveboard/__main__.py     python -m waveboard entry point
-web/index.html           Application shell
-web/app.js               Navigation, utilities, and input integration
-web/hands.js             Hand skeletons and cursor: tracker pointer -> WaveBoardInput
-web/styles.css           480p projector layout and large touch controls
-web/projector.js         Home carousel and minimal drawing workspace
-web/whiteboard.js         Drawing, history, persistence, and PNG export
-web/viewer3d.js           Local 3D viewer
-web/vendor/              Offline Three.js modules and license notices
-web/assets/demo/         Bundled examples
-scripts/start-ubuntu.sh  Local-server and Chromium kiosk launcher (--hands adds tracking)
-gesture-lab/             Hand tracking: camera, MediaPipe, pointer, skeletons
+waveboard/desktop.py      Native Qt window, resource loader, local bridge, camera lifecycle
+waveboard/local.py        Direct file and presentation operations without sockets
+waveboard/server.py       Shared file/conversion services and legacy HTTP adapter
+waveboard/__main__.py     python -m waveboard desktop entry point
+web/                     Bundled projector interface and offline 3D libraries
+scripts/install-jetson.sh One-time Jetson setup
+scripts/install-desktop.py User Applications-menu launcher installation
+scripts/start-ubuntu.sh   Desktop launcher
+gesture-lab/tracker.py   MediaPipe camera worker, JSON over stdout
 ```

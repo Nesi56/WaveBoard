@@ -90,7 +90,17 @@ function toast(message) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => $("#toast").classList.remove("visible"), 3800);
 }
+window.addEventListener("waveboard-tracker-error", event => toast(event.detail || "The camera could not start."));
 async function api(url, options) {
+  if (window.WaveBoardDesktop) {
+    const bridge = await window.WaveBoardNative;
+    const request = { url, method: options?.method || "GET" };
+    if (typeof options?.body === "string") request.body = JSON.parse(options.body);
+    const encoded = await new Promise(resolve => bridge.request(JSON.stringify(request), resolve));
+    const result = JSON.parse(encoded);
+    if (result.error) throw new Error(result.error);
+    return result.result;
+  }
   const response = await fetch(url, options);
   const result = await response.json();
   if (!response.ok)
@@ -332,7 +342,7 @@ async function renderModels() {
   } catch (e) {
     if (token === state.navToken)
       $("#viewer-host").innerHTML =
-        `<div class="empty-state"><h2>3D needs WebGL</h2><p>${escapeHTML(e.message)}. Enable hardware acceleration in your browser.</p></div>`;
+        `<div class="empty-state"><h2>3D needs WebGL</h2><p>${escapeHTML(e.message)}. Check the device graphics drivers and reopen WaveBoard.</p></div>`;
   }
 }
 async function loadModel(url, name) {
@@ -1046,5 +1056,5 @@ window.WaveBoardInput = Object.freeze({
 navigate(location.hash.slice(1) || "home")
   .then(() => refreshRoots())
   .catch(() => {
-    toast("The local server is unavailable.");
+    toast("The workspace could not open device files. Reopen WaveBoard.");
   });

@@ -1,2 +1,4 @@
-# WaveBoard's Python server uses only the Python 3.10+ standard library.
-# Ubuntu presentation playback: sudo apt install libreoffice-impress poppler-utils
+# The Jetson desktop runtime comes from Ubuntu packages, not pip ARM wheels:
+# sudo apt install python3-pyqt5.qtwebengine python3-pyqt5.qtwebchannel
+# Optional presentation tools: libreoffice-impress poppler-utils
+# Run gesture-lab/setup.sh for MediaPipe in its separate camera environment.

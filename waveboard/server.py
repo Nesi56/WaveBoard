@@ -1,6 +1,7 @@
 """Dependency-free local web server and file services for WaveBoard.
 
-Run ``python -m waveboard``. Optional desktop packages ``libreoffice-impress``
+The desktop app reuses the local file/conversion services without starting HTTP.
+Optional desktop packages ``libreoffice-impress``
 and ``poppler-utils`` enable PowerPoint and PDF slide rendering on Ubuntu.
 """
 

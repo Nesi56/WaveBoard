@@ -65,6 +65,7 @@ button svg {
 }
 #main {
   width: 100%;
+  height: 100vh;
   height: 100dvh;
   min-width: 0;
   outline: none;
@@ -118,6 +119,7 @@ body[data-page="home"] .menu-toggle {
   transform: translateX(-50%);
   width: calc(100% - 24px);
   max-width: 760px;
+  max-height: calc(100vh - 24px);
   max-height: calc(100dvh - 24px);
   overflow: auto;
   overscroll-behavior: contain;
@@ -857,6 +859,7 @@ body[data-page="home"] .menu-toggle {
 .slide-stage:fullscreen {
   border-radius: 0;
   width: 100vw;
+  height: 100vh;
   height: 100dvh;
   background: #18211a;
 }
@@ -882,6 +885,7 @@ body[data-page="home"] .menu-toggle {
 dialog {
   width: calc(100vw - 24px);
   max-width: 650px;
+  max-height: calc(100vh - 24px);
   max-height: calc(100dvh - 24px);
   overflow: auto;
   overscroll-behavior: contain;
@@ -984,10 +988,12 @@ dialog::backdrop {
   display: block;
   margin: auto;
   max-width: 100%;
+  max-height: calc(100vh - 150px);
   max-height: calc(100dvh - 150px);
   object-fit: contain;
 }
 .text-preview {
+  max-height: calc(100vh - 170px);
   max-height: calc(100dvh - 170px);
   overflow: auto;
   white-space: pre-wrap;
@@ -1006,6 +1012,7 @@ dialog::backdrop {
   margin-bottom: 10px;
 }
 .picker-list {
+  max-height: calc(100vh - 260px);
   max-height: calc(100dvh - 260px);
   min-height: 56px;
   overflow: auto;
