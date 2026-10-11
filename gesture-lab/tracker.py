@@ -10,6 +10,7 @@ import argparse
 import math
 from collections import deque
 from pathlib import Path
+import sys
 import threading
 import time
 
@@ -32,15 +33,16 @@ def confidence(value):
 
 
 def register_arguments(parser):
-    parser.add_argument("--camera", default="0", help="V4L2 index or path, e.g. /dev/video0")
+    parser.add_argument("--camera", default="0", help="camera index, or a V4L2 path such as /dev/video2 on Linux")
     parser.add_argument("--width", type=positive_int, default=1280, help="requested camera width")
     parser.add_argument("--height", type=positive_int, default=720, help="requested camera height")
     parser.add_argument("--fps", type=positive_int, default=30, help="requested capture FPS; device may negotiate less")
     parser.add_argument("--fourcc", choices=("MJPG", "YUYV"), default="MJPG", help="requested camera pixel format")
     # MediaPipe crops each hand from this image, so full resolution keeps distant
     # hands sharp; it measured about as fast as 640 px.
-    parser.add_argument("--processing-width", type=positive_int, default=1280,
-                        help="inference width; preserves aspect ratio (default: full 1280 px frame)")
+    parser.add_argument("--processing-width", type=positive_int, default=None,
+                        help="shrink frames to this width before inference; preserves aspect ratio "
+                             "(default: the full camera frame)")
     parser.add_argument("--detection-confidence", type=confidence, default=0.5,
                         help="hand detection threshold; lower (e.g. 0.35) finds hands farther from the camera, "
                              "but may mistake other objects for hands (default 0.5)")
@@ -130,9 +132,10 @@ class LatestFrameCapture:
 
 
 def open_camera(cv2, args):
-    """Open and configure the V4L2 camera. Returns (camera, camera_info)."""
+    """Open and configure the camera (V4L2 on Linux). Returns (camera, camera_info)."""
     source = int(str(args.camera)) if str(args.camera).isdigit() else str(args.camera)
-    camera = cv2.VideoCapture(source, cv2.CAP_V4L2)
+    # Windows and macOS pick their own camera backend, so the tracker can be tried on a laptop.
+    camera = cv2.VideoCapture(source, cv2.CAP_V4L2 if sys.platform.startswith("linux") else cv2.CAP_ANY)
     if not camera.isOpened():
         camera.release()
         raise RuntimeError(f"Cannot open camera {source}. Check --camera, USB connection, and camera permissions.")
@@ -154,7 +157,8 @@ def open_camera(cv2, args):
 def landmarker_options(python, vision, args):
     model = Path(args.model).expanduser().resolve()
     if not model.is_file():
-        raise FileNotFoundError(f"Hand model not found: {model}. Run the model-download step in README.md.")
+        raise FileNotFoundError(f"Hand model not found: {model}. Run gesture-lab/setup.sh "
+                                "(or python gesture-lab/download_model.py).")
     return vision.HandLandmarkerOptions(
         base_options=python.BaseOptions(model_asset_path=str(model)),
         running_mode=vision.RunningMode.VIDEO,
@@ -172,7 +176,7 @@ def detect_hands(cv2, mp, np, landmarker, frame, timestamp, processing_width):
     whole frame, so they stay valid for the full-resolution image as well.
     """
     height, width = frame.shape[:2]
-    inference_width = min(width, processing_width)
+    inference_width = min(width, processing_width) if processing_width else width
     if width != inference_width:
         frame = cv2.resize(frame, (inference_width, max(1, round(height * inference_width / width))),
                            interpolation=cv2.INTER_AREA)

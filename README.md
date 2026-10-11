@@ -17,20 +17,55 @@ The repository has two parts that work together:
   tap and drag, swipe an open palm to change cards and slides. The camera image is
   never shown. See [gesture-lab/README.md](gesture-lab/README.md).
 
-## Quick start on the Jetson
+## Set up on the Jetson
 
-```bash
-sudo apt install python3 libreoffice-impress poppler-utils
-cd ~/WaveBoard/gesture-lab
-source ~/vision-env/bin/activate   # the Python environment with MediaPipe and OpenCV
-bash setup.sh                      # adds websockets and the hand model
-cd ~/WaveBoard
-bash scripts/start-ubuntu.sh --hands
-```
+You need a Jetson Orin Nano with JetPack 6 (Ubuntu 22.04) and its desktop, a USB webcam,
+a projector on the Jetson's display output, and internet for the first setup only.
 
-The launcher opens the workspace in a Chromium kiosk window and starts hand
-tracking alongside it. Add `--firefox` to use Firefox instead (see
-[Using Firefox](#using-firefox)). Leave out `--hands` for mouse and touch only.
+1. **Install the system packages and get WaveBoard**
+
+   ```bash
+   sudo apt update
+   sudo apt install git python3-venv python3-pip libreoffice-impress poppler-utils
+   git clone https://github.com/Nesi56/WaveBoard.git ~/WaveBoard
+   ```
+
+   You also need a browser. On JetPack 6, install Firefox from Mozilla's APT repository
+   ([Using Firefox](#using-firefox)); snap browsers can fail to start there. If Chromium
+   already works on your Jetson, you can use it instead.
+
+2. **Set up hand tracking** (once; it downloads MediaPipe and the hand model, a few minutes)
+
+   ```bash
+   cd ~/WaveBoard
+   bash gesture-lab/setup.sh
+   ```
+
+   This creates the Python environment `~/vision-env` with MediaPipe and OpenCV. If you
+   already have a `~/vision-env` that runs MediaPipe, it keeps your versions. When it
+   finishes it prints the command that starts WaveBoard.
+
+3. **Connect the camera and projector.** Set the Jetson to its highest power mode (power
+   menu in the top bar) and run `sudo jetson_clocks` for the best tracking speed. Put the
+   camera facing where the presenter stands, about chest height, with the whole hand in
+   view; even light on the hands helps most. More in
+   [gesture-lab/README.md](gesture-lab/README.md#getting-the-most-accurate-tracking).
+
+4. **Start WaveBoard**
+
+   ```bash
+   cd ~/WaveBoard
+   bash scripts/start-ubuntu.sh --hands --firefox   # leave out --firefox to use Chromium
+   ```
+
+   The workspace opens full screen on the projector with hand tracking running. Hold up a
+   hand: its skeleton appears, and a quick thumb + index pinch taps. Close with `Alt+F4`,
+   which also stops tracking. Leave out `--hands` for mouse and touch only.
+
+If no skeleton appears, read `~/.cache/waveboard/hands.log`. With several cameras, pick one
+with `WAVEBOARD_HANDS_ARGS="--camera /dev/video2" bash scripts/start-ubuntu.sh --hands`
+(`v4l2-ctl --list-devices` lists them). To start WaveBoard from the desktop, see
+[`scripts/waveboard.desktop.example`](scripts/waveboard.desktop.example).
 
 ## Controlling the workspace with your hands
 
@@ -64,17 +99,43 @@ kiosk window (already full screen), F11, or a mouse click; native video controls
 drop-down menus need a mouse, as described in
 [Connecting other trackers](#connecting-other-trackers).
 
-## Preview on this computer
+## Try it on another computer
 
-From the project directory, start the server:
+The workspace runs on Windows, macOS and Linux with Python 3.10 or newer. From the
+WaveBoard folder:
 
-```powershell
-python -m waveboard
+```bash
+python -m waveboard       # python3 on macOS and Linux
 ```
 
-Open **[http://127.0.0.1:8765](http://127.0.0.1:8765)** in Chrome, Edge, Chromium, or Firefox. Leave the terminal running; use `Ctrl+C` to stop the server. This also works on Ubuntu using `python3 -m waveboard`.
+Then open **[http://127.0.0.1:8765](http://127.0.0.1:8765)** in Chrome, Edge, Chromium or
+Firefox. Open that address, not `web/index.html` from the file manager: the page needs the
+server. Leave the terminal running; `Ctrl+C` stops the server.
 
-The Python server uses only the standard library. The browser's 3D libraries are included in `web/vendor`, so no Node installation, package build, CDN, or internet connection is required to run the workspace after setup. Python 3.10 or newer is recommended.
+The Python server uses only the standard library. The browser's 3D libraries are included in `web/vendor`, so no Node installation, package build, CDN, or internet connection is required to run the workspace after setup.
+
+To try hand tracking with the computer's webcam, set it up once, then run the tracker in a
+second terminal next to `python -m waveboard`. Close other apps that use the camera first.
+
+On Windows (PowerShell):
+
+```powershell
+py -m venv .venv
+.venv\Scripts\python -m pip install mediapipe "websockets>=14,<18"
+.venv\Scripts\python gesture-lab\download_model.py
+.venv\Scripts\python gesture-lab\server.py      # each time, in a second terminal
+```
+
+On macOS or Linux:
+
+```bash
+bash gesture-lab/setup.sh
+~/vision-env/bin/python gesture-lab/server.py      # each time, in a second terminal
+```
+
+On a Linux desktop, `bash scripts/start-ubuntu.sh --hands` starts both instead. On macOS,
+allow the terminal to use the camera when asked (System Settings → Privacy & Security →
+Camera). An open page finds the tracker by itself within a few seconds.
 
 For a quick tour, use the Home arrows to find **Files**, tap its card, then choose **Location → Demo files**. The repository includes `welcome.pdf`, `waveboard-demo.webm`, and `wave-sculpture.glb` / `wave-sculpture.obj` to try the presentation, video, and model viewers.
 
@@ -222,13 +283,13 @@ The app also implements a small browser bridge for connecting the tracker. The a
 
 ```javascript
 window.WaveBoardInput.navigate('whiteboard');
-window.WaveBoardInput.pointer({ type: 'down', x: 600, y: 350, pointerId: 1 });
-window.WaveBoardInput.pointer({ type: 'move', x: 650, y: 390, pointerId: 1 });
-window.WaveBoardInput.pointer({ type: 'up', x: 650, y: 390, pointerId: 1 });
+window.WaveBoardInput.pointer({ type: 'down', x: 600, y: 350, pointerId: 7, isPrimary: true });
+window.WaveBoardInput.pointer({ type: 'move', x: 650, y: 390, pointerId: 7, isPrimary: true });
+window.WaveBoardInput.pointer({ type: 'up', x: 650, y: 390, pointerId: 7, isPrimary: true });
 // Use type: 'cancel' if the tracker loses the active finger.
 ```
 
-Coordinates are viewport/client coordinates in CSS pixels, measured from the visible browser content's top-left corner. Convert camera coordinates into this space without multiplying by the device pixel ratio. Use a consistent `pointerId` throughout one contact; use `1` for the primary finger.
+Coordinates are viewport/client coordinates in CSS pixels, measured from the visible browser content's top-left corner. Convert camera coordinates into this space without multiplying by the device pixel ratio. Use a consistent `pointerId` throughout one contact. `pointerId` defaults to `1`, which Chromium also gives the real mouse, so a camera tracker should use another number and pass `isPrimary: true` for its main finger, as `web/hands.js` does; otherwise mouse movement joins the tracker's strokes.
 
 The synthetic bridge supports drawing on the canvas, 3D interactions, buttons, and checkboxes. Use OS mouse/touch input for native media controls, select menus, and text interactions.
 

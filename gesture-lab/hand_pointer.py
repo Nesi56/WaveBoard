@@ -139,7 +139,7 @@ class HandPointer:
         self._last_swipe = -10 ** 9
 
     def update(self, hands, timestamp, aspect_ratio=16 / 9):
-        """hands: GestureEngine hand records (mirrored, normalized landmarks). Returns a JSON-safe dict."""
+        """hands: HandEngine hand records (mirrored, normalized landmarks). Returns a JSON-safe dict."""
         size = (round(SCREEN[1] * aspect_ratio), SCREEN[1])
         if self._map is None or self._map.camera_size != size:
             self._map = ScreenMap(size, SCREEN, self.reach)

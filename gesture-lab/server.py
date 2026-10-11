@@ -78,7 +78,7 @@ async def bridge(state, stop, origins=ALLOWED_ORIGINS):
 
 def main():
     import tracker
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description="Hand-tracking stream for the WaveBoard workspace.")
     tracker.register_arguments(parser)
     parser.add_argument("--allow-origin", action="append", default=[], metavar="URL",
                         help="also stream hands to this page origin, e.g. http://127.0.0.1:8770 for "
@@ -107,7 +107,8 @@ def main():
             print(message, flush=True)
             state.publish({"type": "status", "level": "error", "message": message})
 
-    threading.Thread(target=tracking_worker, daemon=True).start()
+    worker = threading.Thread(target=tracking_worker, daemon=True)
+    worker.start()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     print(f"Hand tracking for the WaveBoard workspace on ws://127.0.0.1:{BRIDGE_PORT}.", flush=True)
     print("Open the workspace (python3 -m waveboard, http://127.0.0.1:8765). Press Ctrl+C here to stop.", flush=True)
@@ -117,6 +118,8 @@ def main():
         pass
     finally:
         stop.set()
+        # Let MediaPipe and the camera close before the interpreter exits.
+        worker.join(timeout=3)
 
 
 if __name__ == "__main__":

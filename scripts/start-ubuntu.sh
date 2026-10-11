@@ -130,6 +130,9 @@ import sys
 
 try:
     with socket.socket() as listener:
+        # Like the server: closed connections from the last run (TIME_WAIT) do not block
+        # the port, while a program still listening on it does.
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(("127.0.0.1", int(sys.argv[1])))
 except OSError as error:
     print(f"Cannot start WaveBoard on port {sys.argv[1]}: {error}", file=sys.stderr)

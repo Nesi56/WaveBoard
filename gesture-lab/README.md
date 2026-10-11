@@ -12,16 +12,18 @@ webcam -> tracker.py (MediaPipe, CPU) -> server.py (ws://127.0.0.1:8766) -> web/
 
 ## Set up on the Jetson
 
-Use the Python environment that already runs MediaPipe and OpenCV on your Orin Nano:
-
 ```bash
-cd ~/WaveBoard/gesture-lab
-source ~/vision-env/bin/activate
-bash setup.sh
+cd ~/WaveBoard
+bash gesture-lab/setup.sh
 ```
 
-Setup keeps your working MediaPipe, OpenCV and NumPy, adds the `websockets` package,
-and copies your hand-drawing app's `hand_landmarker.task` or downloads Google's.
+Setup uses the active virtual environment, or `~/vision-env`, which it creates when missing
+(`sudo apt install python3-venv python3-pip` first). It installs MediaPipe, which brings
+OpenCV and NumPy, unless the environment already runs them, in which case it keeps your
+versions. It adds the `websockets` package, and copies your hand-drawing app's
+`hand_landmarker.task` or downloads Google's. The launcher runs `~/vision-env/bin/python`;
+for another environment, setup prints the `WAVEBOARD_HANDS_PYTHON=...` to use. For Windows
+and macOS, see [Try it on another computer](../README.md#try-it-on-another-computer).
 
 ## Run
 
@@ -49,13 +51,14 @@ http://127.0.0.1:8765. Only one program can use the camera at a time.
   about chest height, with the whole hand in view at your working distance.
 - **Light:** even light on the hands from the front. Avoid standing in front of a window
   or a bright projection; a plain background helps.
-- **Full resolution:** tracking uses the whole 1280×720 camera frame (`--processing-width
-  1280`). MediaPipe crops each hand from that image, so distant hands stay sharp, and it
-  measured about as fast as 640 px.
+- **Full resolution:** tracking uses the whole camera frame. MediaPipe crops each hand from
+  that image, so distant hands stay sharp, and at 1280×720 it measured about as fast as
+  640 px. `--processing-width 640` shrinks frames first if the Jetson needs the speed.
 - **Standing farther back:** lower the detection threshold, `--detection-confidence 0.35`
-  (default 0.5), and if the camera offers it, capture 1080p with `--width 1920 --height 1080`.
-  Check the camera's modes with `v4l2-ctl --list-formats-ext`. A lower threshold also finds
-  more things that are not hands, so only lower it as far as you need.
+  (default 0.5), and if the camera offers it, capture 1080p with `--width 1920 --height 1080`
+  for sharper fingers on small, distant hands; watch the tracking rate in the log. Check the
+  camera's modes with `v4l2-ctl --list-formats-ext`. A lower threshold also finds more
+  things that are not hands, so only lower it as far as you need.
 - **Reaching the edges:** `--reach` (default 0.12) ignores that fraction of each camera
   edge so the cursor can reach the screen edges while your hand stays in view. Raise it if
   you cannot reach the edges; lower it if the cursor feels too fast.
@@ -77,10 +80,10 @@ WAVEBOARD_HANDS_ARGS="--camera /dev/video2 --detection-confidence 0.35" bash scr
 
 | Option | Default | Purpose |
 | --- | --- | --- |
-| `--camera` | `0` | V4L2 index or path, e.g. `/dev/video2` |
+| `--camera` | `0` | Camera index, or on Linux a path such as `/dev/video2` |
 | `--width`, `--height`, `--fps` | 1280, 720, 30 | Requested capture mode; the camera may choose less |
 | `--fourcc` | `MJPG` | Camera pixel format (`YUYV` for cameras without MJPG) |
-| `--processing-width` | 1280 | Width of the image given to MediaPipe |
+| `--processing-width` | full frame | Shrink frames to this width before MediaPipe |
 | `--detection-confidence` | 0.5 | Hand detection threshold |
 | `--reach` | 0.12 | Camera edge band mapped beyond the screen edges |
 | `--allow-origin` | | Another workspace page origin, e.g. `http://127.0.0.1:8770` |
@@ -93,8 +96,8 @@ Find the camera with `v4l2-ctl --list-devices` (`sudo apt install v4l-utils`).
   `server.py`). It names the camera mode, reports errors, and prints the tracking rate.
 - **Camera cannot open:** close other camera apps, find the device with
   `v4l2-ctl --list-devices`, and pass `--camera /dev/videoN`.
-- **Model absent or MediaPipe import fails:** activate `vision-env` (the environment that runs
-  your drawing app) and run `bash setup.sh` again.
+- **Model absent or MediaPipe import fails:** run `bash gesture-lab/setup.sh` again; it reports
+  which step fails.
 - **The cursor jumps between hands:** it follows one hand at a time; another hand only takes
   over when it pinches while the first is not pressing.
 - **Taps land beside buttons:** pinch deliberately and hold still for a moment; small
