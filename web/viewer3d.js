@@ -339,6 +339,14 @@ export async function createModelViewer(container, options = {}) {
     load,
     reset,
     setMode,
+    zoom(factor) {
+      if (disposed || !Number.isFinite(factor) || factor <= 0) return;
+      const offset = camera.position.clone().sub(controls.target);
+      const distance = Math.min(controls.maxDistance, Math.max(controls.minDistance, offset.length() * factor));
+      camera.position.copy(controls.target).add(offset.setLength(distance));
+      controls.update();
+      requestRender();
+    },
     setAutoRotate(enabled) {
       controls.autoRotate = Boolean(enabled);
       requestRender();

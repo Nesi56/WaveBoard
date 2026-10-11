@@ -72,8 +72,22 @@ class PinchState:
     active: str | None = None
     candidate: str | None = None
     candidate_since: int = 0
+    needs_release: bool = False
+
+    def interrupt(self, timestamp_ms):
+        """Unseen time cannot complete a candidate pinch or release."""
+        self.candidate = self.active
+        self.candidate_since = timestamp_ms
+        if self.active is None:
+            self.needs_release = True
 
     def update(self, ratios, timestamp_ms):
+        if self.needs_release:
+            self.active = self.candidate = None
+            self.candidate_since = timestamp_ms
+            if all(ratio >= self.off for ratio in ratios.values()):
+                self.needs_release = False
+            return {name: False for name in TIPS}
         possible = [name for name, ratio in ratios.items()
                     if ratio < (self.off if name == self.active else self.on)]
         selected = min(possible, key=lambda name: ratios[name]) if possible else None
@@ -91,16 +105,28 @@ class Track:
     handedness: str
     palm: list
     pinch: PinchState = field(default_factory=PinchState)
+    last_seen_ms: int = 0
+    velocity: list = field(default_factory=lambda: [0.0, 0.0])
+    missed: bool = False
+    reacquired: bool = False
+    record: dict | None = None
 
 
 class HandIdentities:
-    """Associate by palm proximity and handedness, never by detector array order."""
+    """Associate palms by bounded motion prediction, retaining short dropouts."""
 
-    def __init__(self):
+    def __init__(self, retention_ms=450):
         self.tracks = {}
         self.next_id = 1
+        self.retention_ms = retention_ms
+        self._timestamp = -33
 
-    def assign(self, detections):
+    def assign(self, detections, timestamp_ms=None):
+        # The optional clock keeps this small utility convenient in offline tests.
+        timestamp_ms = self._timestamp + 33 if timestamp_ms is None else timestamp_ms
+        self._timestamp = timestamp_ms
+        self.tracks = {key: track for key, track in self.tracks.items()
+                       if timestamp_ms - track.last_seen_ms < self.retention_ms}
         old = list(self.tracks.values())
         palms = [[sum(d["landmarks"][i][axis] for i in (0, 5, 9, 13, 17)) / 5
                   for axis in (0, 1)] for d in detections]
@@ -117,54 +143,98 @@ class HandIdentities:
                 if previous is None:
                     cost += 0.60
                     continue
-                delta = distance(old[previous].palm, palms[index])
-                if delta > 0.40:
+                track = old[previous]
+                elapsed = max(0, timestamp_ms - track.last_seen_ms) / 1000
+                # Limit extrapolation so a bad landmark cannot fling an identity
+                # across the frame. A wider gate accommodates fast return motion.
+                ahead = min(elapsed, 0.25)
+                expected = [p + v * ahead for p, v in zip(track.palm, track.velocity)]
+                delta = distance(expected, palms[index])
+                gate = min(0.65, 0.24 + 1.5 * elapsed)
+                if delta > gate:
                     cost += 10
                 label = detections[index].get("handedness", "unknown")
-                cost += delta + (0.18 if label != old[previous].handedness else 0)
+                mismatch = label != "unknown" and track.handedness != "unknown" and label != track.handedness
+                cost += delta + (0.18 if mismatch else 0)
             if cost < best_cost:
                 best, best_cost = assignment, cost
-        current, result = {}, []
+        result, matched = [], set()
         for i, detection in enumerate(detections):
             previous = best[i] if best is not None else None
             if previous is None:
                 label = detection.get("handedness", "unknown")
                 identity = f"{label.lower()}-{self.next_id}"
                 self.next_id += 1
-                track = Track(identity, label, palms[i])
+                track = Track(identity, label, palms[i], last_seen_ms=timestamp_ms)
+                self.tracks[identity] = track
             else:
                 track = old[previous]
+                elapsed = (timestamp_ms - track.last_seen_ms) / 1000
+                if elapsed > 0:
+                    velocity = [(now - before) / elapsed for now, before in zip(palms[i], track.palm)]
+                    speed = math.hypot(*velocity)
+                    if speed > 3.0:
+                        velocity = [v * 3.0 / speed for v in velocity]
+                    track.velocity = [0.75 * v + 0.25 * previous_v
+                                      for v, previous_v in zip(velocity, track.velocity)]
                 track.palm = palms[i]
-            current[track.identity] = track
+                track.reacquired = track.missed
+                track.last_seen_ms = timestamp_ms
+            track.missed = False
+            matched.add(track.identity)
             result.append(track)
-        # Missing hands lose pinch state immediately. Reappearance gets a new id.
-        self.tracks = current
+        for identity, track in self.tracks.items():
+            if identity not in matched:
+                track.missed = True
+                track.pinch.interrupt(timestamp_ms)
         return result
 
 
 class HandEngine:
     """Detections -> hand records with stable ids, finger states and debounced pinches."""
 
-    def __init__(self):
+    def __init__(self, hold_ms=220):
         self.identities = HandIdentities()
         self.last_timestamp = None
+        self.hold_ms = hold_ms
 
     def process(self, detections, timestamp_ms, aspect_ratio=16 / 9):
         """Return [{id, landmarks, fingers, pinches, palm}]. Timestamps are monotonic ms."""
         if self.last_timestamp is not None and timestamp_ms <= self.last_timestamp:
             raise ValueError("Hand timestamps must increase monotonically")
-        if self.last_timestamp is not None and timestamp_ms - self.last_timestamp > 500:
+        if self.last_timestamp is not None and timestamp_ms - self.last_timestamp >= self.identities.retention_ms:
             # A stalled camera or inference loop is also a loss of tracking, even
             # if the next result contains a hand in the same location.
-            self.identities.assign([])
+            self.identities.tracks.clear()
         self.last_timestamp = timestamp_ms
         hands = []
-        for detection, track in zip(detections, self.identities.assign(detections)):
-            landmarks = detection["landmarks"]
-            if len(landmarks) != 21:
+        for detection in detections:
+            if len(detection["landmarks"]) != 21:
                 raise ValueError("Each hand must contain 21 landmarks")
+        for detection, track in zip(detections, self.identities.assign(detections, timestamp_ms)):
+            landmarks = detection["landmarks"]
             points = detection.get("world_landmarks") or image_geometry(landmarks, aspect_ratio)
-            hands.append({"id": track.identity, "landmarks": landmarks, "fingers": finger_states(points),
-                          "pinches": track.pinch.update(pinch_ratios(landmarks, aspect_ratio), timestamp_ms),
-                          "palm": track.palm[:]})
+            ratios = pinch_ratios(landmarks, aspect_ratio)
+            cancelled = bool(track.reacquired and track.pinch.active
+                             and ratios[track.pinch.active] >= track.pinch.off)
+            if cancelled:
+                # A release while the hand was unseen is a cancellation, never a tap.
+                track.pinch.active = None
+                track.pinch.interrupt(timestamp_ms)
+            record = {"id": track.identity, "landmarks": landmarks, "fingers": finger_states(points),
+                      "pinches": track.pinch.update(ratios, timestamp_ms), "palm": track.palm[:],
+                      "observed": True, "predicted": False, "tracking_source": "detected",
+                      "tracking_age_ms": 0, "observation_timestamp": timestamp_ms,
+                      "pinch_released": all(ratio >= track.pinch.off for ratio in ratios.values()),
+                      "reacquired": track.reacquired, "interaction_cancelled": cancelled}
+            track.record = record
+            hands.append(record)
+        for track in self.identities.tracks.values():
+            age = timestamp_ms - track.last_seen_ms
+            if track.missed and track.record is not None and age <= self.hold_ms:
+                # Hold the last measured shape. Invented landmarks cannot activate
+                # gestures, but retaining the identity prevents visual flicker.
+                hands.append({**track.record, "observed": False, "predicted": True,
+                              "tracking_source": "held", "tracking_age_ms": age,
+                              "reacquired": False, "interaction_cancelled": False})
         return hands

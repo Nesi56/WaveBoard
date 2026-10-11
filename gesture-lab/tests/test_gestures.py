@@ -93,14 +93,39 @@ class IdentityTests(unittest.TestCase):
         second = identities.assign([self.detection("Right", 0.77), self.detection("Left", 0.22)])
         self.assertEqual([t.identity for t in second], [first[1].identity, first[0].identity])
 
-    def test_missing_hand_loses_pinch_and_gets_new_identity(self):
+    def test_briefly_missing_hand_keeps_identity_and_active_pinch(self):
         identities = HandIdentities()
         first = identities.assign([self.detection("Left", 0.2)])[0]
         first.pinch.active = "index"
         identities.assign([])
         again = identities.assign([self.detection("Left", 0.2)])[0]
+        self.assertEqual(first.identity, again.identity)
+        self.assertEqual(again.pinch.active, "index")
+        self.assertTrue(again.reacquired)
+
+    def test_long_missing_hand_gets_new_identity_and_pinch_state(self):
+        identities = HandIdentities()
+        first = identities.assign([self.detection("Left", 0.2)], 0)[0]
+        first.pinch.active = "index"
+        identities.assign([], 100)
+        again = identities.assign([self.detection("Left", 0.2)], 450)[0]
         self.assertNotEqual(first.identity, again.identity)
         self.assertIsNone(again.pinch.active)
+
+    def test_fast_motion_after_missed_detection_preserves_identity(self):
+        identities = HandIdentities()
+        first = identities.assign([self.detection("Left", 0.15)], 0)[0]
+        identities.assign([self.detection("Left", 0.35)], 100)
+        identities.assign([], 200)
+        again = identities.assign([self.detection("Left", 0.8)], 300)[0]
+        self.assertEqual(first.identity, again.identity)
+
+    def test_motion_prediction_preserves_ids_when_same_label_hands_cross(self):
+        identities = HandIdentities()
+        first = identities.assign([self.detection("Left", 0.2), self.detection("Left", 0.8)], 0)
+        identities.assign([self.detection("Left", 0.4), self.detection("Left", 0.6)], 100)
+        crossed = identities.assign([self.detection("Left", 0.4), self.detection("Left", 0.6)], 200)
+        self.assertEqual([t.identity for t in crossed], [first[1].identity, first[0].identity])
 
     def test_handedness_flicker_does_not_change_nearby_identity(self):
         identities = HandIdentities()
@@ -110,6 +135,13 @@ class IdentityTests(unittest.TestCase):
 
 
 class HandEngineTests(unittest.TestCase):
+    @staticmethod
+    def pinch_detection(closed):
+        points = [[0.5, 0.5, 0] for _ in range(21)]
+        points[0] = [0.5, 0.7, 0]
+        points[4], points[8] = [0.5, 0.4, 0], [0.51 if closed else 0.6, 0.4, 0]
+        return {"handedness": "Left", "landmarks": points}
+
     def test_records_have_stable_ids_fingers_and_debounced_pinches(self):
         engine = HandEngine()
         detection = IdentityTests.detection("Left", 0.2)
@@ -132,6 +164,37 @@ class HandEngineTests(unittest.TestCase):
         first = engine.process([detection], 0)
         resumed = engine.process([detection], 600)
         self.assertNotEqual(resumed[0]["id"], first[0]["id"])
+
+    def test_dropout_holds_visual_without_refreshing_observation(self):
+        engine = HandEngine()
+        first = engine.process([self.pinch_detection(False)], 0)[0]
+        held = engine.process([], 150)[0]
+        self.assertEqual(held["id"], first["id"])
+        self.assertEqual(held["landmarks"], first["landmarks"])
+        self.assertFalse(held["observed"])
+        self.assertTrue(held["predicted"])
+        self.assertEqual(held["tracking_age_ms"], 150)
+        self.assertEqual(engine.process([], 250), [])
+
+    def test_unconfirmed_pinch_cannot_complete_during_dropout(self):
+        engine = HandEngine()
+        engine.process([self.pinch_detection(True)], 0)
+        engine.process([], 40)
+        returned = engine.process([self.pinch_detection(True)], 140)[0]
+        self.assertFalse(returned["pinches"]["index"])
+        self.assertFalse(engine.process([self.pinch_detection(True)], 200)[0]["pinches"]["index"])
+        engine.process([self.pinch_detection(False)], 230)
+        engine.process([self.pinch_detection(True)], 260)
+        self.assertTrue(engine.process([self.pinch_detection(True)], 320)[0]["pinches"]["index"])
+
+    def test_release_while_missing_cancels_instead_of_completing_tap(self):
+        engine = HandEngine()
+        engine.process([self.pinch_detection(True)], 0)
+        self.assertTrue(engine.process([self.pinch_detection(True)], 60)[0]["pinches"]["index"])
+        engine.process([], 100)
+        returned = engine.process([self.pinch_detection(False)], 180)[0]
+        self.assertFalse(returned["pinches"]["index"])
+        self.assertTrue(returned["interaction_cancelled"])
 
 
 if __name__ == "__main__":

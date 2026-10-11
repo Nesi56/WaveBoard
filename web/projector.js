@@ -239,7 +239,7 @@ export function renderProjectorBoard({
         await board.exportPNG(),
         `WaveBoard-${new Date().toISOString().slice(0, 10)}.png`,
       );
-      toast("Drawing saved to Downloads.");
+      toast(window.WaveBoardDesktop ? "Saving drawing…" : "Drawing saved to Downloads.");
     } catch (error) {
       toast(error.message || "Drawing could not be saved.");
     } finally {

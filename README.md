@@ -46,9 +46,15 @@ There is no Node build, cloud account, web hosting, or browser installation step
 
 1. Connect the webcam and projector.
 2. Open **WaveBoard** from Applications.
-3. Hold up a hand. Pinch thumb and index to tap; hold a pinch and move to drag.
+3. Hold up one hand and move the round cursor onto a control. Pinch thumb and
+   index, then release to select; hold a pinch and move to draw or drag.
    Swipe an open palm to browse Home cards or slides.
-4. Close with **Alt+F4** or **Ctrl+Q**. **F11** toggles the full screen window.
+4. Pinch the top tab to open the menu. Its buttons, dialogs, file locations,
+   and settings all accept the same hand controls. Pinch and move up or down
+   to scroll a list; drag the video bar to seek.
+5. Use the menu's **Fullscreen** button to change window mode. To finish, open
+   **Settings → Close WaveBoard** and confirm. Keyboard shortcuts remain
+   available: **Alt+F4** or **Ctrl+Q** to close, **F11** for fullscreen.
 
 For a camera-free launch or a normal-sized window:
 
@@ -72,13 +78,38 @@ WAVEBOARD_HANDS_ARGS="--camera /dev/video2" bash scripts/start-ubuntu.sh
 Point the camera toward the presenter at chest height, with even lighting and the
 whole hand in view. See [hand tracking](gesture-lab/README.md) for tuning.
 
+Tracking now defaults to one teacher's hand and a 640-pixel processing width.
+The model runs separately from camera capture, while checked optical flow follows
+palm motion between model results. **Settings** shows **Hand updates** and
+**AI detection** separately: a smoother cursor does not mean the model runs at
+the camera's frame rate. Actual rates depend on the Jetson and camera.
+
+For two hands, or small hands farther from the camera, change the launch options:
+
+```bash
+WAVEBOARD_HANDS_ARGS="--max-hands 2 --processing-width 960" bash scripts/start-ubuntu.sh
+```
+
+Two hands and a larger processing image can cost more CPU time. During brief
+tracking interruptions, the cursor holds its last position and waits for a
+reliable observation. A prolonged loss cancels a press instead of clicking a
+button accidentally; show an open hand before pinching again.
+
 ## Projector controls
 
 Home shows one large card at a time: **Draw**, **3D**, **Files**, **Video**, or **Slides**. Tap the left or right arrow to browse, then tap the card to open it. Keyboard arrow keys also browse the cards.
 
-The tab at the top opens the menu. It contains **Home**, the current utility's extra tools, fullscreen, help, and settings. On the drawing board, only the color palette and three brush-size dots stay visible; pen, marker, eraser, undo/redo, save, and clear are in the top menu. Clearing a board can be undone.
+The tab at the top opens the menu. It contains **Home**, the current utility's extra tools, fullscreen, help, and settings. Controls highlight under the hand cursor. On the drawing board, only the color palette and three brush-size dots stay visible; pen, marker, eraser, undo/redo, save, and clear are in the top menu. Clearing a board can be undone.
 
 The other utilities keep their main content large. **3D** has one Open button, with view options in the top menu. **Files** uses large rows and a Location chooser; import, search, and refresh are in the menu. **Video** has large play/pause and seek controls, with mute in the menu. **Slides** has large previous/next buttons and a slide counter, with Present in the menu.
+
+The local file picker uses large buttons for folders and device/USB locations.
+In **Files**, choose the destination folder, then **Import** to copy a file from
+another location. **Find file** includes an on-screen keyboard. **Save** exports
+the whiteboard directly to a `WaveBoard` folder inside Pictures and displays its
+path; other downloads go to `WaveBoard` inside Downloads. Each save receives a
+unique filename. A custom `--root` uses that folder's `WaveBoard` subfolder
+instead. **3D** includes menu buttons for zooming without a mouse wheel.
 
 ## Utilities
 
@@ -92,7 +123,8 @@ The other utilities keep their main content large. **3D** has one Open button, w
 
 Tap opens controls and items; press and hold exposes details where offered. Drawing and 3D orbiting use a held pointer while moving. With hand tracking, a pinch is the tap and a held pinch is the held pointer. There is no projector calibration: the camera view is mapped onto the screen with a fixed edge margin.
 
-The whiteboard stores its drawing in the current browser profile using `localStorage`, with a bounded save size. Export a PNG to keep a separate copy. Browser storage is specific to the browser profile and site address: the kiosk profile and your normal desktop browser have separate drawings, as do different ports.
+The whiteboard stores its drawing in the app's local Qt profile using
+`localStorage`, with a bounded save size. Export a PNG to keep a separate copy.
 
 ## Troubleshooting
 
@@ -102,6 +134,10 @@ The whiteboard stores its drawing in the current browser profile using `localSto
   with the Qt bindings installed.
 - **No hand skeleton:** run `bash gesture-lab/setup.sh`, close other camera apps, and
   reopen WaveBoard. Camera diagnostics are written to `/tmp/waveboard-hands.log`.
+- **Slow or intermittent hands:** compare **Hand updates** and **AI detection** in
+  Settings. Keep the default one-hand mode for one presenter. See
+  [tracking speed and accuracy](gesture-lab/README.md#tracking-speed-and-accuracy)
+  for capture, image-size, and lighting checks.
 - **Slides unavailable:** install `libreoffice-impress` and `poppler-utils`. Conversion
   happens on the Jetson. PowerPoint animations are rendered as static slides.
 - **Browser profile:** the desktop app keeps its own persistent Qt profile under the
@@ -114,10 +150,19 @@ The whiteboard stores its drawing in the current browser profile using `localSto
 python3 -m unittest discover -s tests -v
 # Legacy bridge tests need: python3 -m pip install 'websockets>=14,<18'
 (cd gesture-lab && python3 -m unittest discover -s tests -v)
+node tests/hand-input.test.mjs
+node tests/hand-rendering.test.mjs
+# With the desktop Qt Python environment and an active display:
+python3 tests/check_hand_ui.py
+python3 tests/check_desktop_actions.py
 ```
 
 Tests cover direct local operations, path confinement, duplicate/failed imports,
-presentation conversion, and the retained legacy HTTP helpers. The default app does
+presentation conversion, gesture continuity, camera-rate motion with a deliberately
+slow detector, and the retained legacy HTTP helpers. Optical-flow image tests need
+the tracker environment's OpenCV and NumPy. The Qt checks exercise hand-operated
+controls, real exports/imports, rendered 3D zoom and closing the application using
+isolated temporary files. The default app does
 not use those HTTP helpers or `gesture-lab/server.py`; they remain for existing
 integration tests and older development integrations.
 
@@ -137,4 +182,5 @@ scripts/install-jetson.sh One-time Jetson setup
 scripts/install-desktop.py User Applications-menu launcher installation
 scripts/start-ubuntu.sh   Desktop launcher
 gesture-lab/tracker.py   MediaPipe camera worker, JSON over stdout
+gesture-lab/tracker_motion.py Checked optical flow between model observations
 ```
