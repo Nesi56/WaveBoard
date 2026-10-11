@@ -1258,3 +1258,22 @@ dialog::backdrop {
     animation-duration: 0.01ms !important;
   }
 }
+
+/* Air pointing needs a visible target and room for natural hand movement. */
+.hand-hover {
+  outline: 4px solid #527931;
+  outline-offset: 3px;
+}
+.hand-pressed { filter: brightness(0.91); }
+.hand-keyboard { margin: 16px 0; display: grid; gap: 6px; }
+.keyboard-row { display: flex; justify-content: center; gap: 6px; }
+.keyboard-row button {
+  flex: 1; min-width: 0; min-height: 44px; padding: 8px 2px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--green);
+}
+.keyboard-actions button { min-height: 46px; }
+.slide-stage.presenting {
+  position: fixed; inset: 0; z-index: 15; border: 0; border-radius: 0;
+  width: 100vw; height: 100vh; background: #18211a;
+}
+.slide-stage.presenting .present-overlay { display: flex; }

@@ -58,6 +58,23 @@ class LocalWorkspaceTests(unittest.TestCase):
         with self.assertRaises(APIError):
             self.local.import_file("/api/upload?root=demo", source)
 
+    def test_in_app_import_confines_source_and_preserves_destination(self):
+        demo = self.web / "assets/demo"
+        demo.mkdir(parents=True)
+        (demo / "lesson.txt").write_text("lesson")
+        body = {"source_root": "demo", "source_path": "lesson.txt", "root": "custom", "path": ""}
+        result = self.local.request("/api/import", "POST", body)
+        self.assertEqual(result["path"], "lesson.txt")
+        self.assertEqual((self.root / "lesson.txt").read_text(), "lesson")
+        with self.assertRaises(APIError):
+            self.local.request("/api/import", "POST", body)
+        with self.assertRaises(APIError):
+            self.local.request("/api/import", "POST", {**body, "source_path": "../../index.html"})
+        with self.assertRaises(APIError):
+            self.local.request("/api/import", "POST", {**body, "path": "../"})
+        with self.assertRaises(APIError):
+            self.local.request("/api/import", "POST", {"source_path": "lesson.txt"})
+
     def test_presentation_uses_local_conversion_and_restricts_page_access(self):
         (self.root / "slides.pdf").write_bytes(b"%PDF")
         with patch.object(self.app._executor, "submit"):

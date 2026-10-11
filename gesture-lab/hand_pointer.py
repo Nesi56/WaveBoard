@@ -1,6 +1,6 @@
 """Hand pointer and skeleton for the WaveBoard workspace, from tracked hands.
 
-The workspace (web/ at the repository root, served by ``python -m waveboard``)
+The local desktop workspace (web/ at the repository root)
 accepts input through window.WaveBoardInput. tracker.py adds what is computed
 here to every tracking frame, and web/hands.js draws the skeletons and turns the
 pointer into browser input:
@@ -122,10 +122,15 @@ class HandPointer:
     press_radius = 26          # px: a pinch that moves less than this is a tap, not a drag
     swipe_distance = 0.2 * SCREEN[0]
     swipe_cooldown_ms = 800
+    hold_ms = 220
+    observation_limit_ms = 450
 
-    def __init__(self, reach=0.12, smoothing=True):
+    def __init__(self, reach=0.12, smoothing=True, max_hands=2):
+        if max_hands not in (1, 2):
+            raise ValueError("max_hands must be 1 or 2")
         self.reach = reach
         self.smoothing = smoothing
+        self.max_hands = max_hands
         self.primary = None
         self.down = False
         self.swipe_id = 0
@@ -137,9 +142,78 @@ class HandPointer:
         self._joint_filters = {}
         self._skeletons = []
         self._last_swipe = -10 ** 9
+        self._last_hands = {}
+        self._point = None
+        self._cancelled = False
+        self._require_release = False
+        self._had_gap = False
+        self._tracking = {}
+        self._last_update = None
+
+    def _prepare_hands(self, hands, timestamp):
+        """Keep measured flow separate from frozen visuals and gesture evidence."""
+        current = []
+        present = set()
+        for source in hands:
+            hand = dict(source)
+            observed = bool(hand.get("observed", not hand.get("predicted", False)))
+            age = max(0, hand.get("tracking_age_ms", 0))
+            observation = hand.get("observation_timestamp", timestamp - age)
+            age = max(age, timestamp - observation)
+            flow = hand.get("tracking_source") == "flow" and not hand.get("predicted", False)
+            if age >= self.observation_limit_ms:
+                continue
+            if observed or flow:
+                hand.update(observed=observed, predicted=False, motion_tracked=True,
+                            tracking_age_ms=age, observation_timestamp=observation)
+                self._last_hands[hand["id"]] = (timestamp, hand)
+                current.append(hand)
+                present.add(hand["id"])
+        for identity, (last_motion, hand) in list(self._last_hands.items()):
+            age = timestamp - hand["observation_timestamp"]
+            if timestamp - last_motion > self.hold_ms or age >= self.observation_limit_ms:
+                del self._last_hands[identity]
+                continue
+            if identity not in present:
+                current.append({**hand, "observed": False, "predicted": True,
+                                "motion_tracked": False, "tracking_source": "held",
+                                "tracking_age_ms": age, "interaction_cancelled": False})
+        # Repeated detector identity changes must not accumulate ghost skeletons
+        # beyond the configured hand count. Prefer current evidence over holds;
+        # retaining the primary breaks ties without overriding fresh detections.
+        current.sort(key=lambda hand: (0 if hand["observed"] else 1 if hand["motion_tracked"] else 2,
+                                       hand["id"] != self.primary, hand["tracking_age_ms"]))
+        selected, identities = [], set()
+        for hand in current:
+            if hand["id"] in identities:
+                continue
+            selected.append(hand)
+            identities.add(hand["id"])
+            if len(selected) == self.max_hands:
+                break
+        self._last_hands = {hand["id"]: self._last_hands[hand["id"]] if hand["predicted"] else (timestamp, hand)
+                            for hand in selected}
+        return selected
+
+    def _cancel_press(self):
+        if self.down:
+            self._cancelled = True
+            self._require_release = True
+        self.down, self._anchor = False, None
 
     def update(self, hands, timestamp, aspect_ratio=16 / 9):
         """hands: HandEngine hand records (mirrored, normalized landmarks). Returns a JSON-safe dict."""
+        self._cancelled = False
+        if self._last_update is not None and timestamp - self._last_update >= self.observation_limit_ms:
+            # The camera loop may stop producing packets entirely. A fresh
+            # result must not silently revive a press that expired meanwhile.
+            self._cancel_press()
+            self._last_hands.clear()
+            self._swipes.clear()
+            self._joint_filters.clear()
+            self._filter = PointFilter(self.smoothing) if self.primary is not None else None
+        self._last_update = timestamp
+        hands = self._prepare_hands(hands, timestamp)
         size = (round(SCREEN[1] * aspect_ratio), SCREEN[1])
         if self._map is None or self._map.camera_size != size:
             self._map = ScreenMap(size, SCREEN, self.reach)
@@ -147,21 +221,41 @@ class HandPointer:
         self._update_skeletons(hands, timestamp)
 
         primary = next((h for h in hands if h["id"] == self.primary), None)
+        if primary is None and self.down:
+            self._cancel_press()
         if primary is None or (not self.down and not primary["pinches"]["index"]):
             # Keep following one hand; a hand that starts pinching takes over.
-            primary = next((h for h in hands if h["pinches"]["index"]), None) or primary or (hands[0] if hands else None)
+            primary = next((h for h in hands if h["observed"] and h["pinches"]["index"]), None) \
+                or primary or (hands[0] if hands else None)
         if primary is None:
             self.primary, self.down, self._anchor, self._filter = None, False, None, None
+            self._point, self._tracking, self._had_gap = None, {}, False
             return self._packet(None)
         if primary["id"] != self.primary:
             self.primary, self.down, self._anchor = primary["id"], False, None
             self._filter = PointFilter(self.smoothing)
+            self._had_gap = False
+        self._tracking = {key: primary.get(key) for key in
+                          ("observed", "predicted", "motion_tracked", "tracking_source", "tracking_age_ms")}
+
+        if primary["predicted"]:
+            self._had_gap = True
+            # Holding a shape prevents flicker without drawing invented strokes.
+            return self._packet(self._point)
 
         landmarks = primary["landmarks"]
         # Between thumb and index tips: it barely moves when the fingers close, so
         # the cursor does not jump at the moment of a pinch.
         point = self._filter(self._map.to_screen(*midpoint(landmarks[4], landmarks[8])), timestamp)
-        down = bool(primary["pinches"]["index"])
+        down = self.down
+        if primary["observed"]:
+            if primary.get("interaction_cancelled") or \
+                    (self._had_gap and self.down and not primary["pinches"]["index"]):
+                self._cancel_press()
+            if self._require_release and primary.get("pinch_released", not any(primary["pinches"].values())):
+                self._require_release = False
+            down = bool(primary["pinches"]["index"]) and not self._require_release and not self._cancelled
+            self._had_gap = False
         if down and not self.down:
             self._anchor = point
         elif not down:
@@ -172,6 +266,7 @@ class HandPointer:
                 point = self._anchor
             else:
                 self._anchor = None  # a drag: follow the hand from now on
+        self._point = point
         return self._packet(point)
 
     def _detect_swipes(self, hands, timestamp):
@@ -179,9 +274,13 @@ class HandPointer:
         self._swipes = {hand_id: swipe for hand_id, swipe in self._swipes.items() if hand_id in present}
         for hand in hands:
             detector = self._swipes.setdefault(hand["id"], SwipeDetector(self.swipe_distance))
+            if not hand["observed"]:
+                if hand["predicted"]:
+                    detector.reset()
+                continue
             fingers = hand["fingers"]
             if not (fingers["index"] and fingers["middle"] and fingers["ring"] and fingers["pinky"]) \
-                    or any(hand["pinches"].values()):
+                    or any(hand["pinches"].values()) or hand.get("reacquired", False):
                 detector.reset()
                 continue
             swipe = detector.update(self._map.to_screen(*hand["palm"][:2]), timestamp,
@@ -195,16 +294,27 @@ class HandPointer:
         """All 21 joints of every hand, smoothed and mapped to the screen like the cursor."""
         present = {hand["id"] for hand in hands}
         self._joint_filters = {hand_id: f for hand_id, f in self._joint_filters.items() if hand_id in present}
+        previous = {skeleton["id"]: skeleton for skeleton in self._skeletons}
         self._skeletons = []
         for hand in hands:
             filters = self._joint_filters.setdefault(hand["id"], [PointFilter(self.smoothing) for _ in range(21)])
-            points = [f(self._map.to_screen(p[0], p[1]), timestamp) for f, p in zip(filters, hand["landmarks"])]
+            if hand["predicted"] and hand["id"] in previous:
+                points = previous[hand["id"]]["points"]
+            else:
+                filtered = [f(self._map.to_screen(p[0], p[1]), timestamp) for f, p in zip(filters, hand["landmarks"])]
+                points = [[round(x / SCREEN[0], 4), round(y / SCREEN[1], 4)] for x, y in filtered]
             self._skeletons.append({"id": hand["id"], "pinch": bool(hand["pinches"]["index"]),
-                                    "points": [[round(x / SCREEN[0], 4), round(y / SCREEN[1], 4)] for x, y in points]})
+                                    "observed": hand["observed"], "predicted": hand["predicted"],
+                                    "motion_tracked": hand["motion_tracked"],
+                                    "tracking_age_ms": hand["tracking_age_ms"],
+                                    "points": points})
 
     def _packet(self, point):
         packet = {"visible": point is not None, "x": None, "y": None, "down": self.down, "hand": self.primary,
                   "swipe_id": self.swipe_id, "swipe": self.swipe_direction,
+                  "observed": False, "predicted": False, "motion_tracked": False,
+                  "tracking_age_ms": 0, "tracking_source": "lost", "cancelled": self._cancelled,
+                  **self._tracking,
                   "hands": [{**skeleton, "primary": skeleton["id"] == self.primary} for skeleton in self._skeletons]}
         if point is not None:
             packet["x"] = min(max(point[0] / SCREEN[0], 0.0), 1.0)

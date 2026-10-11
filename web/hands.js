@@ -36,7 +36,8 @@ style.textContent = `
   background: rgb(255 255 255 / 0.35); box-shadow: 0 0 0 3px rgb(255 255 255 / 0.85);
   transition: background 0.08s;
 }
-.hand-cursor[data-down="true"] { background: var(--deep, ${DEEP}); }`;
+.hand-cursor[data-down="true"] { background: var(--deep, ${DEEP}); }
+.hand-cursor[data-tracking="recovering"] { opacity: 0.55; border-style: dashed; }`;
 document.head.append(style);
 const layer = document.createElement("div");
 layer.className = "hand-layer";
@@ -56,6 +57,10 @@ let pressHand = null;
 // that failed to press (or was cancelled) cannot turn into a press somewhere else.
 let armed = true;
 let last = { x: 0, y: 0 };
+let cursorTarget = null;
+let motionAllowed = false;
+let pendingMove = false;
+let pointerDown = false;
 let lastSwipe = null;
 let lastFrameAt = 0;
 const targets = new Map(); // hand id -> { points (CSS px), primary, pinch }
@@ -69,11 +74,16 @@ function release(type) {
   if (pressed) input({ type, x: last.x, y: last.y });
   pressed = false;
   pressHand = null;
+  pendingMove = false;
 }
 
 function hide() {
   release("cancel");
   cursor.hidden = true;
+  cursorTarget = null;
+  motionAllowed = false;
+  armed = false;
+  window.WaveBoardInput?.suspend();
   targets.clear();
   paintSoon();
 }
@@ -99,8 +109,23 @@ function placeLayer() {
 
 function apply(pointer) {
   lastFrameAt = performance.now();
-  if (pointer.swipe_id !== lastSwipe) {
-    // Like a touch screen: push the page left to see the next one.
+  // QProcess can deliver several camera frames before the display repaints.
+  // Consume an unpainted drag point before replacing it so excursions outside
+  // a control (or around a stroke corner) are not erased by frame batching.
+  if (pressed && pendingMove && cursorTarget) {
+    last = { ...cursorTarget };
+    input({ type: "move", ...last });
+  }
+  pendingMove = false;
+  const observed = pointer.observed !== false && !pointer.predicted;
+  // Optical flow supplies measured camera movement between full landmark
+  // detections. It can continue a drag, but cannot invent a pinch or release.
+  motionAllowed = !pointer.predicted && (observed || pointer.motion_tracked === true);
+  if (pointer.cancelled) {
+    release("cancel");
+    armed = false;
+  }
+  if (observed && !pointer.cancelled && pointer.swipe_id !== lastSwipe) {
     if (lastSwipe !== null && pointer.swipe) arrowKey(pointer.swipe < 0 ? "ArrowRight" : "ArrowLeft");
     lastSwipe = pointer.swipe_id;
   }
@@ -110,35 +135,41 @@ function apply(pointer) {
   for (const hand of pointer.hands || []) {
     targets.set(hand.id, {
       points: hand.points.map(([x, y]) => [x * window.innerWidth, y * window.innerHeight]),
-      primary: hand.primary, pinch: hand.pinch,
+      primary: hand.primary, pinch: hand.pinch, predicted: hand.predicted,
     });
   }
-  paintSoon();
   if (pressed && pointer.hand !== pressHand) {
-    // The tracker switched to another hand mid-press (the pressing hand was missed for a
-    // frame). End the press where it was instead of dragging it to the other hand.
     release("cancel");
     armed = false;
   }
-  // Keep the point on the page: x == innerWidth is outside it and would hit nothing.
-  last = {
+  cursorTarget = {
     x: Math.min(Math.max(pointer.x * window.innerWidth, 0), window.innerWidth - 1),
     y: Math.min(Math.max(pointer.y * window.innerHeight, 0), window.innerHeight - 1),
   };
+  if (cursor.hidden) last = { ...cursorTarget };
   cursor.hidden = false;
-  // A combined transform also works in JetPack's older Qt WebEngine.
-  cursor.style.transform = `translate(${last.x}px, ${last.y}px) scale(${pointer.down ? 0.75 : 1})`;
-  cursor.dataset.down = String(pointer.down);
-  if (!pointer.down) {
-    release("up");
-    armed = true;
-  } else if (pressed) {
-    input({ type: "move", ...last });
-  } else if (armed) {
-    armed = false;
-    pressed = input({ type: "down", ...last });
-    pressHand = pressed ? pointer.hand : null;
+  cursor.dataset.tracking = pointer.predicted ? "recovering" : "tracked";
+  pointerDown = pointer.down;
+  if (!observed) window.WaveBoardInput?.suspend();
+  if (observed && !pointer.cancelled) {
+    if (!pointer.down) {
+      if (pressed) {
+        last = { ...cursorTarget };
+        input({ type: "move", ...last });
+      }
+      release("up");
+      armed = true;
+    } else if (!pressed && armed) {
+      // Gesture edges use their packet's coordinates, even if hover, press and
+      // release all arrived in one bridge read before requestAnimationFrame.
+      last = { ...cursorTarget };
+      armed = false;
+      pressed = input({ type: "down", ...last });
+      pressHand = pressed ? pointer.hand : null;
+    }
   }
+  pendingMove = pressed && motionAllowed;
+  paintSoon();
 }
 
 function paintSoon() {
@@ -150,9 +181,10 @@ function paintSoon() {
 
 let lastPaint = performance.now();
 function paint(now) {
-  const dt = Math.min(100, Math.max(0, now - lastPaint));
+  const dt = Math.min(32, Math.max(0, now - lastPaint));
   lastPaint = now;
-  const ratio = window.devicePixelRatio || 1;
+  // A 4K projector should not quadruple skeleton rasterization work.
+  const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
   const width = Math.round(window.innerWidth * ratio);
   const height = Math.round(window.innerHeight * ratio);
   if (canvas.width !== width || canvas.height !== height) {
@@ -164,6 +196,18 @@ function paint(now) {
   for (const id of shown.keys()) if (!targets.has(id)) shown.delete(id);
   const glide = 1 - Math.exp(-dt / GLIDE_MS);
   let moving = false;
+  if (cursorTarget && !cursor.hidden) {
+    last.x += (cursorTarget.x - last.x) * glide;
+    last.y += (cursorTarget.y - last.y) * glide;
+    moving = Math.hypot(cursorTarget.x - last.x, cursorTarget.y - last.y) > 0.3;
+    cursor.style.transform = `translate(${last.x}px, ${last.y}px) scale(${pointerDown ? 0.75 : 1})`;
+    cursor.dataset.down = String(pointerDown);
+    if (motionAllowed) {
+      window.WaveBoardInput?.hover(last.x, last.y);
+      if (pressed) input({ type: "move", ...last });
+      pendingMove = false;
+    }
+  }
   // Draw the secondary hand first so the primary hand stays on top.
   const hands = [...targets.entries()].sort(([, a], [, b]) => Number(a.primary) - Number(b.primary));
   for (const [id, target] of hands) {
@@ -192,10 +236,10 @@ function handScale(points) {
   return Math.min(3, Math.max(0.35, palm / 80));
 }
 
-function drawHand(points, { primary, pinch }) {
+function drawHand(points, { primary, pinch, predicted }) {
   const unit = handScale(points);
   ctx.save();
-  ctx.globalAlpha = primary ? 1 : 0.55;
+  ctx.globalAlpha = (primary ? 1 : 0.55) * (predicted ? 0.55 : 1);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.beginPath();
@@ -237,6 +281,18 @@ function validPointer(pointer) {
         hand.points.length === 21 && hand.points.every(finitePair))));
 }
 
+let lastStatsAt = 0;
+function trackingFrame(data) {
+  if (!validPointer(data.pointer)) return;
+  apply(data.pointer);
+  if (performance.now() - lastStatsAt > 500) {
+    lastStatsAt = performance.now();
+    window.dispatchEvent(new CustomEvent("waveboard-tracking-stats", { detail: {
+      tracking_fps: data.tracking_fps, inference_fps: data.inference_fps,
+    } }));
+  }
+}
+
 function connect() {
   let socket;
   try {
@@ -253,7 +309,7 @@ function connect() {
     } catch {
       return;
     }
-    if (data?.type === "frame" && validPointer(data.pointer)) apply(data.pointer);
+    if (data?.type === "frame") trackingFrame(data);
     else if (data?.type === "status" && data.level === "error") hide();
   });
   socket.addEventListener("close", () => {
@@ -274,7 +330,7 @@ if (window.WaveBoardDesktop) {
     bridge.hands.connect(encoded => {
       let data;
       try { data = JSON.parse(encoded); } catch { return; }
-      if (data?.type === "frame" && validPointer(data.pointer)) apply(data.pointer);
+      if (data?.type === "frame") trackingFrame(data);
       else if (data?.type === "status" && data.level === "error") {
         hide();
         window.dispatchEvent(new CustomEvent("waveboard-tracker-error", { detail: data.message }));

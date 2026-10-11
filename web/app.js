@@ -1,3 +1,4 @@
+import { createHandInput } from "./hand-input.js";
 import { createWhiteboard } from "./whiteboard.js";
 import { renderProjectorHome, renderProjectorBoard } from "./projector.js";
 
@@ -23,6 +24,8 @@ const paths = {
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.5 1-1.5 1.5-1.5 2M12 17h.01"/>',
   settings:
     '<path d="m10 3-.7 2.1-2 .9-2.1-.5-2 3.5 1.4 1.7v2.4L3.2 15l2 3.5 2.1-.5 2 .9.7 2.1h4l.7-2.1 2-.9 2.1.5 2-3.5-1.4-1.9v-2.4L21 9l-2-3.5-2.1.5-2-.9L14 3z"/><circle cx="12" cy="12" r="3"/>',
+  plus: '<path d="M12 4v16M4 12h16"/>',
+  minus: '<path d="M4 12h16"/>',
   expand: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
   touch:
     '<path d="M9 12V5a2 2 0 0 1 4 0v6l2-1 5 2-1 7-3 3h-5l-6-7a2 2 0 0 1 3-2l1 1"/>',
@@ -91,6 +94,43 @@ function toast(message) {
   toastTimer = setTimeout(() => $("#toast").classList.remove("visible"), 3800);
 }
 window.addEventListener("waveboard-tracker-error", event => toast(event.detail || "The camera could not start."));
+let nativeFullscreen = false;
+let wasFullscreenBeforePresent = false;
+let trackingStats = null;
+window.addEventListener("waveboard-tracking-stats", event => {
+  trackingStats = event.detail;
+  updateTrackingStats();
+});
+function updateTrackingStats() {
+  const rate = value => Number.isFinite(value) ? `${value.toFixed(1)} fps` : "Waiting for camera";
+  if ($("#hand-update-rate")) $("#hand-update-rate").textContent = rate(trackingStats?.tracking_fps);
+  if ($("#hand-detection-rate")) $("#hand-detection-rate").textContent = rate(trackingStats?.inference_fps);
+}
+function isFullscreen() { return window.WaveBoardDesktop ? nativeFullscreen : Boolean(document.fullscreenElement); }
+async function setFullscreen(enabled, element = document.documentElement) {
+  if (window.WaveBoardDesktop) {
+    const bridge = await window.WaveBoardNative;
+    nativeFullscreen = await new Promise(resolve => bridge.setFullscreen(enabled, resolve));
+  } else if (enabled) await element.requestFullscreen();
+  else if (document.fullscreenElement) await document.exitFullscreen();
+}
+async function exitPresentation() {
+  const stage = $("#slide-stage");
+  stage?.classList.remove("presenting");
+  await setFullscreen(window.WaveBoardDesktop && wasFullscreenBeforePresent);
+}
+if (window.WaveBoardDesktop) {
+  window.WaveBoardNative.then(bridge => {
+    bridge.isFullscreen(value => { nativeFullscreen = value; document.dispatchEvent(new Event("fullscreenchange")); });
+    bridge.fullscreenChanged.connect(value => {
+      nativeFullscreen = value;
+      document.dispatchEvent(new Event("fullscreenchange"));
+      if (!value) $("#slide-stage")?.classList.remove("presenting");
+    });
+    bridge.saved.connect(message => toast(message));
+  }).catch(error => toast(error.message));
+}
+
 async function api(url, options) {
   if (window.WaveBoardDesktop) {
     const bridge = await window.WaveBoardNative;
@@ -205,12 +245,14 @@ document.addEventListener("click", (event) => {
   const target = event.target.closest("button[data-page]");
   if (target) navigate(target.dataset.page);
 });
+document.addEventListener("fullscreenchange", () => {
+  $("#fullscreen-button").innerHTML = `${icon("expand")}${isFullscreen() ? "Exit full screen" : "Full screen"}`;
+});
 $("#fullscreen-button").onclick = async () => {
   try {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else await document.documentElement.requestFullscreen();
+    await setFullscreen(!isFullscreen());
   } catch {
-    toast("Use F11 for full screen.");
+    toast("Full screen could not be changed. Try again.");
   }
 };
 function renderHome() {
@@ -294,7 +336,7 @@ async function renderModels() {
   $("#main").innerHTML =
     `<section class="utility-screen">${heading("3D", button("open-model", "Open", "folder"))}<div class="viewer-wrap"><div id="viewer-host" class="viewer-host"></div><div class="viewer-label"><span id="model-name">Wave sculpture</span></div></div></section>`;
   setMenu(
-    `${button("solid-mode", "Solid", "cube", "menu-tool")}${button("wire-mode", "Wireframe", "grid", "menu-tool")}${button("reset-model", "Reset view", "expand", "menu-tool")}${button("auto-rotate", "Rotate", "rotate", "menu-tool")}<p id="model-status" class="menu-note" role="status">Loading…</p>`,
+    `${button("solid-mode", "Solid", "cube", "menu-tool")}${button("wire-mode", "Wireframe", "grid", "menu-tool")}${button("zoom-model-in", "Zoom in", "plus", "menu-tool")}${button("zoom-model-out", "Zoom out", "minus", "menu-tool")}${button("reset-model", "Reset view", "expand", "menu-tool")}${button("auto-rotate", "Rotate", "rotate", "menu-tool")}<p id="model-status" class="menu-note" role="status">Loading…</p>`,
   );
   $("#open-model").onclick = () =>
     pickFile(
@@ -334,6 +376,8 @@ async function renderModels() {
     $("#solid-mode").onclick = () => state.viewer.setMode("solid");
     $("#wire-mode").onclick = () => state.viewer.setMode("wireframe");
     $("#reset-model").onclick = () => state.viewer.reset();
+    $("#zoom-model-in").onclick = () => state.viewer.zoom(0.8);
+    $("#zoom-model-out").onclick = () => state.viewer.zoom(1.25);
     $("#auto-rotate").onclick = () => {
       rotate = !rotate;
       state.viewer.setAutoRotate(rotate);
@@ -365,6 +409,24 @@ async function refreshRoots() {
     state.path = "";
   }
   return result;
+}
+function searchKeyboard() {
+  const rows = ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm.-_"];
+  return `<div class="hand-keyboard" aria-label="File name keyboard">${rows.map(row => `<div class="keyboard-row">${[...row].map(key => `<button type="button" data-key="${key}" aria-label="Type ${key}">${key}</button>`).join("")}</div>`).join("")}<div class="keyboard-row keyboard-actions"><button type="button" data-key="space">Space</button><button type="button" data-key="backspace" aria-label="Delete last character">Delete</button><button type="button" data-key="clear">Clear</button></div></div>`;
+}
+function bindSearchKeyboard(input) {
+  $$("[data-key]").forEach(key => {
+    key.onclick = () => {
+      const action = key.dataset.key;
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? start;
+      if (action === "clear") input.value = "";
+      else if (action === "backspace") input.setRangeText("", start === end ? Math.max(0, start - 1) : start, end, "end");
+      else input.setRangeText(action === "space" ? " " : action, start, end, "end");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.focus({ preventScroll: true });
+    };
+  });
 }
 let fileQuery = "";
 async function renderFiles() {
@@ -412,7 +474,7 @@ async function renderFiles() {
   $("#find-file").onclick = () => {
     modal(
       "Find a file",
-      `<input class="search" id="file-search" placeholder="File name" aria-label="File name" value="${escapeHTML(fileQuery)}">`,
+      `<input class="search" id="file-search" placeholder="File name" aria-label="File name" value="${escapeHTML(fileQuery)}">${searchKeyboard()}`,
       button("apply-search", "Find", "file"),
     );
     const apply = () => {
@@ -424,11 +486,20 @@ async function renderFiles() {
     $("#file-search").onkeydown = (e) => {
       if (e.key === "Enter") apply();
     };
+    bindSearchKeyboard($("#file-search"));
     $("#file-search").focus();
   };
   $("#upload-file").onclick = () => {
     const root = state.root,
       path = state.path;
+    if (window.WaveBoardDesktop) {
+      pickFile("Import into this folder", [], async (sourceRoot, entry) => {
+        await api("/api/import", { method: "POST", body: JSON.stringify({ source_root: sourceRoot, source_path: entry.path, root, path }) });
+        toast("File imported.");
+        if (state.page === "files") await listFiles();
+      });
+      return;
+    }
     chooseLocal("", async (file) => {
       toast("Importing…");
       await api(
@@ -607,6 +678,9 @@ function chooseLocal(accept, onFile) {
   input.click();
 }
 async function pickFile(title, extensions, onPick, onLocal) {
+  // Every desktop file is available through a device/USB root. Native OS
+  // choosers cannot receive the camera cursor, so stay inside this picker.
+  if (window.WaveBoardDesktop) onLocal = null;
   // One picker owns this shared dialog. Closing it also invalidates pending
   // requests, so a slow folder or disconnected drive cannot reopen it later.
   pickFile.cancelActive?.();
@@ -658,7 +732,7 @@ async function pickFile(title, extensions, onPick, onLocal) {
       );
       if (!active() || n !== request) return;
       const list = result.entries.filter(
-        (e) => e.is_dir || extensions.includes(extension(e.name)),
+        (e) => e.is_dir || !extensions.length || extensions.includes(extension(e.name)),
       );
       modal(
         title,
@@ -704,7 +778,10 @@ async function pickFile(title, extensions, onPick, onLocal) {
       if (!active() || n !== request) return;
       toast(e.message);
       if (onLocal) openLocal();
-      else modal(title, `<p class="picker-empty">${escapeHTML(e.message)}</p>`);
+      else {
+        modal(title, `<p class="picker-empty">${escapeHTML(e.message)}</p>`, button("picker-retry", "Try again", "rotate"));
+        $("#picker-retry").onclick = draw;
+      }
     }
   }
   await draw();
@@ -789,8 +866,7 @@ function setVideo(url, name) {
   };
   $("#video-fullscreen").onclick = async () => {
     try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await document.documentElement.requestFullscreen();
+      await setFullscreen(!isFullscreen());
     } catch {
       toast("Use the menu for full screen.");
     }
@@ -798,7 +874,7 @@ function setVideo(url, name) {
   const onFullscreen = () => {
     $("#video-fullscreen")?.setAttribute(
       "aria-label",
-      document.fullscreenElement ? "Exit full screen" : "Full screen video",
+      isFullscreen() ? "Exit full screen" : "Full screen video",
     );
   };
   document.addEventListener("fullscreenchange", onFullscreen);
@@ -832,9 +908,11 @@ function renderSlides() {
   $("#next-slide").onclick = () => advanceSlide(1);
   $("#present-slides").onclick = async () => {
     try {
-      await $("#slide-stage").requestFullscreen();
+      wasFullscreenBeforePresent = isFullscreen();
+      await setFullscreen(true, $("#slide-stage"));
+      if (window.WaveBoardDesktop) $("#slide-stage").classList.add("presenting");
     } catch {
-      toast("Use F11 to make the workspace full screen.");
+      toast("Presentation could not enter full screen. Try again.");
     }
   };
   $("#open-slides").onclick = () =>
@@ -886,7 +964,7 @@ function showSlide() {
   $("#present-next").onclick = () => advanceSlide(1);
   $("#present-prev").disabled = state.slideIndex === 0;
   $("#present-next").disabled = state.slideIndex === count - 1;
-  $("#present-exit").onclick = () => document.exitFullscreen();
+  $("#present-exit").onclick = () => exitPresentation().catch(error => toast(error.message));
   $("#slide-counter").textContent =
     `${String(state.slideIndex + 1).padStart(2, "0")} / ${String(count).padStart(2, "0")}`;
   $("#prev-slide").disabled = state.slideIndex === 0;
@@ -978,7 +1056,7 @@ document.addEventListener("keydown", (event) => {
 $("#help-button").onclick = () =>
   modal(
     "Simple by design",
-    `<div class="dialog-copy"><p><strong>Home:</strong> Use the arrows. Tap a card to open it.</p><p><strong>Draw:</strong> Pick a color and dot size on the left. Drag to draw.</p><p><strong>Top tab:</strong> Open tools, save, or go Home.</p><p><strong>Files:</strong> Tap to open. Hold for details.</p><p><strong>3D:</strong> Drag to rotate. Pinch to zoom.</p></div>`,
+    `<div class="dialog-copy"><p><strong>Hands:</strong> Move your index finger to point. Pinch thumb and index, then release to select. The highlighted control shows your target. Keep pinching and move up or down to scroll lists. Pinch and drag the video bar to seek.</p><p><strong>Home:</strong> Use the arrows. Tap a card to open it.</p><p><strong>Draw:</strong> Pick a color and dot size on the left. Drag to draw.</p><p><strong>Top tab:</strong> Open tools, save, or go Home.</p><p><strong>Files:</strong> Pinch to open. Use the three-dot button for details.</p><p><strong>3D:</strong> Pinch and drag to rotate. Use Zoom in and Zoom out in the menu.</p></div>`,
   );
 $("#settings-button").onclick = async () => {
   try {
@@ -987,8 +1065,17 @@ $("#settings-button").onclick = async () => {
   const presentation = state.status?.presentation;
   modal(
     "Settings",
-    `<label class="settings-row"><span>Extra contrast</span><input type="checkbox" id="contrast-setting" ${document.body.classList.contains("high-contrast") ? "checked" : ""}></label><div class="settings-row"><span>PowerPoint</span><span class="status-badge">${presentation?.available ? "Ready" : "Setup needed"}</span></div>${presentation?.available ? "" : '<p class="dialog-copy">On Ubuntu, install LibreOffice Impress and poppler-utils.</p>'}`,
+    `<label class="settings-row"><span>Extra contrast</span><input type="checkbox" id="contrast-setting" ${document.body.classList.contains("high-contrast") ? "checked" : ""}></label><div class="settings-row"><span>Hand updates</span><span id="hand-update-rate" class="status-badge"></span></div><div class="settings-row"><span>AI detection</span><span id="hand-detection-rate" class="status-badge"></span></div><div class="settings-row"><span>PowerPoint</span><span class="status-badge">${presentation?.available ? "Ready" : "Setup needed"}</span></div>${presentation?.available ? "" : '<p class="dialog-copy">On Ubuntu, install LibreOffice Impress and poppler-utils.</p>'}`,
   );
+  updateTrackingStats();
+  if (window.WaveBoardDesktop) {
+    $("#dialog-content").insertAdjacentHTML("beforeend", `<div class="dialog-actions">${button("quit-app", "Close WaveBoard", "close", "secondary")}</div>`);
+    $("#quit-app").onclick = () => {
+      modal("Close WaveBoard?", '<p class="dialog-copy">End this classroom session?</p>', `${button("cancel-quit", "Keep working", "", "secondary")}${button("confirm-quit", "Close WaveBoard", "close")}`);
+      $("#cancel-quit").onclick = () => $("#dialog").close();
+      $("#confirm-quit").onclick = () => window.WaveBoardNative.then(bridge => bridge.quit());
+    };
+  }
   $("#contrast-setting").onchange = (e) => {
     document.body.classList.toggle("high-contrast", e.target.checked);
     try {
@@ -1002,56 +1089,9 @@ try {
     localStorage.getItem("waveboard-contrast") === "true",
   );
 } catch {}
-// Input adapter for a future camera-tracking process. Coordinates are CSS pixels
-// in the viewport; the tracker remains a separate subsystem.
-const activePointers = new Map();
-window.WaveBoardInput = Object.freeze({
-  navigate,
-  pointer({ type, x, y, pointerId = 1, isPrimary = pointerId === 1 }) {
-    if (
-      !["down", "move", "up", "cancel"].includes(type) ||
-      !Number.isFinite(x) ||
-      !Number.isFinite(y)
-    )
-      return false;
-    let active = activePointers.get(pointerId);
-    if (type === "down") {
-      const target = document.elementFromPoint(x, y);
-      if (!target) return false;
-      active = { target, startX: x, startY: y, moved: false };
-      activePointers.set(pointerId, active);
-    }
-    if (!active) return false;
-    active.moved ||= Math.hypot(x - active.startX, y - active.startY) > 12;
-    active.target.dispatchEvent(
-      new PointerEvent("pointer" + type, {
-        bubbles: true,
-        cancelable: true,
-        clientX: x,
-        clientY: y,
-        pointerId,
-        pointerType: "touch",
-        isPrimary: Boolean(isPrimary),
-        button: 0,
-        buttons: type === "up" || type === "cancel" ? 0 : 1,
-        pressure: type === "up" ? 0 : 0.5,
-      }),
-    );
-    if (type === "up" || type === "cancel") {
-      activePointers.delete(pointerId);
-      if (
-        type === "up" &&
-        !active.moved &&
-        document
-          .elementFromPoint(x, y)
-          ?.closest("button, input[type=checkbox]") ===
-          active.target.closest("button, input[type=checkbox]")
-      )
-        active.target.closest("button, input[type=checkbox]")?.click();
-    }
-    return true;
-  },
-});
+// Hand events share the normal workspace actions and add browser defaults that
+// untrusted synthetic events do not trigger (click, range, and drag scrolling).
+window.WaveBoardInput = Object.freeze({ navigate, ...createHandInput() });
 
 navigate(location.hash.slice(1) || "home")
   .then(() => refreshRoots())

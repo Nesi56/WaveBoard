@@ -2,7 +2,7 @@
 import re
 from pathlib import Path, PurePosixPath
 import shutil
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 from .server import APIError, MAX_UPLOAD_BYTES, confined_path, file_entry
 
@@ -48,6 +48,14 @@ class LocalWorkspace:
             if not isinstance(body, dict) or not all(isinstance(body.get(k), str) for k in ("root", "path")):
                 raise APIError(400, "Choose a presentation.")
             return self.app.start_presentation(body["root"], body["path"])
+        if method == "POST" and parsed.path == "/api/import":
+            if not isinstance(body, dict) or not all(isinstance(body.get(k), str) for k in (
+                "source_root", "source_path", "root", "path"
+            )):
+                raise APIError(400, "Choose the source file and destination folder.")
+            source_root = self.app.root(body["source_root"])
+            source = confined_path(source_root.path, body["source_path"])
+            return self.import_file("/api/upload?" + urlencode({"root": body["root"], "path": body["path"]}), source)
         raise APIError(404, "Unknown local operation.")
 
     def import_file(self, url, source):

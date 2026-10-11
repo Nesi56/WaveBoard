@@ -6,8 +6,10 @@ import os
 from pathlib import Path
 import shlex
 import sys
+import tempfile
 
 from .local import LocalWorkspace
+from .hand_stream import HandPacketStream
 from .server import APIError, MIME_OVERRIDES, PROJECT_DIR, WaveBoardApp
 
 
@@ -18,9 +20,9 @@ def main():
     parser.add_argument("--root", action="append", type=Path, help="Restrict the file browser to this folder")
     args = parser.parse_args()
     try:
-        from PyQt5.QtCore import QFile, QIODevice, QObject, QProcess, QStandardPaths, Qt, QUrl, pyqtSignal, pyqtSlot
+        from PyQt5.QtCore import QEvent, QFile, QIODevice, QObject, QProcess, QStandardPaths, Qt, QUrl, pyqtSignal, pyqtSlot
         from PyQt5.QtGui import QIcon, QKeySequence
-        from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox, QShortcut
+        from PyQt5.QtWidgets import QApplication, QFileDialog, QShortcut
         from PyQt5.QtWebChannel import QWebChannel
         from PyQt5.QtWebEngineCore import QWebEngineUrlRequestInterceptor, QWebEngineUrlRequestJob, QWebEngineUrlScheme, QWebEngineUrlSchemeHandler
         from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineProfile, QWebEngineSettings, QWebEngineView
@@ -87,6 +89,26 @@ def main():
 
     class Bridge(QObject):
         hands = pyqtSignal(str)
+        fullscreenChanged = pyqtSignal(bool)
+        saved = pyqtSignal(str)
+
+        @pyqtSlot(bool, result=bool)
+        def setFullscreen(self, enabled):
+            view.showFullScreen() if enabled else view.showNormal()
+            return view.isFullScreen()
+
+        @pyqtSlot(result=bool)
+        def isFullscreen(self):
+            return view.isFullScreen()
+
+        @pyqtSlot()
+        def quit(self):
+            view.close()
+
+        def eventFilter(self, watched, event):
+            if watched is view and event.type() == QEvent.WindowStateChange:
+                self.fullscreenChanged.emit(view.isFullScreen())
+            return super().eventFilter(watched, event)
 
         @pyqtSlot()
         def startHands(self):
@@ -96,7 +118,7 @@ def main():
                 if Path(executable).is_file():
                     tracker.start(executable, ["-u", str(PROJECT_DIR / "gesture-lab/tracker.py"), *shlex.split(os.environ.get("WAVEBOARD_HANDS_ARGS", ""))])
                 else:
-                    QMessageBox.information(view, "Hand tracking setup", "Run gesture-lab/setup.sh once to enable hand control. WaveBoard will open with mouse and touch.")
+                    self.hands.emit(json.dumps({"type": "status", "level": "error", "message": "Hand tracking needs setup. Run gesture-lab/setup.sh once, then reopen WaveBoard."}))
 
         started = False
 
@@ -127,40 +149,47 @@ def main():
         return parse_qs(urlsplit(url).query, keep_blank_values=True, max_num_fields=32)
 
     bridge = Bridge(view)
+    view.installEventFilter(bridge)
     channel = QWebChannel(page)
     channel.registerObject("workspace", bridge)
     page.setWebChannel(channel)
 
     def download(item):
-        destination, _ = QFileDialog.getSaveFileName(view, "Save file", str(Path.home() / item.suggestedFileName()))
-        if destination:
-            item.setPath(destination)
-            item.accept()
-        else:
+        # A hand-controlled session must not stop at an operating-system dialog.
+        # Reserve a unique filename so repeated saves never replace earlier work.
+        name = Path(item.suggestedFileName().replace("\\", "/")).name
+        suffix = Path(name).suffix[:20]
+        stem = Path(name).stem[:100] or "waveboard"
+        kind = QStandardPaths.PicturesLocation if suffix.lower() == ".png" else QStandardPaths.DownloadLocation
+        base = Path(QStandardPaths.writableLocation(kind) or str(Path.home()))
+        if args.root:
+            base = args.root[0].expanduser().resolve()
+        directory = base / "WaveBoard"
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            descriptor, destination = tempfile.mkstemp(prefix=stem + "-", suffix=suffix, dir=directory)
+            os.close(descriptor)
+        except OSError:
             item.cancel()
+            bridge.saved.emit("Could not save the file. Check the device's free space and folder permissions.")
+            return
+        def finished():
+            if item.state() == item.DownloadCompleted:
+                bridge.saved.emit("Saved to " + destination)
+            else:
+                Path(destination).unlink(missing_ok=True)
+                bridge.saved.emit("The file could not be saved. Try again.")
+        item.finished.connect(finished)
+        item.setPath(destination)
+        item.accept()
     profile.downloadRequested.connect(download)
 
     tracker = QProcess(view)
-    pending = bytearray()
+    hand_stream = HandPacketStream()
     closing = [False]
     def read_hands():
-        pending.extend(bytes(tracker.readAllStandardOutput()))
-        latest = None
-        while b"\n" in pending:
-            line, _, remainder = pending.partition(b"\n")
-            pending[:] = remainder
-            if len(line) > 65536:
-                continue
-            try:
-                packet = json.loads(line)
-                if isinstance(packet, dict) and packet.get("type") in {"frame", "status"}:
-                    latest = line.decode()
-            except (ValueError, UnicodeDecodeError):
-                continue
-        if len(pending) > 65536:
-            pending.clear()
-        if latest:
-            bridge.hands.emit(latest)
+        for encoded in hand_stream.feed(bytes(tracker.readAllStandardOutput())):
+            bridge.hands.emit(encoded)
     tracker.readyReadStandardOutput.connect(read_hands)
     tracker.setStandardErrorFile(QStandardPaths.writableLocation(QStandardPaths.TempLocation) + "/waveboard-hands.log")
     def tracker_error(*_):

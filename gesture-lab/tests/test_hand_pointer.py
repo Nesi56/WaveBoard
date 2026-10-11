@@ -86,6 +86,134 @@ class HandPointerTests(unittest.TestCase):
             result = tracker.update([hand("a", 0.8 - i * 0.05, 0.5, pinch=True, fingers=FINGERS_OPEN)], t)
         self.assertEqual(result["swipe_id"], 0)
 
+    def test_short_dropout_holds_cursor_and_press_without_inventing_motion(self):
+        tracker = pointer()
+        tracker.update([hand("a", 0.5, 0.5, pinch=True)], 0)
+        tracker.update([hand("a", 0.6, 0.5, pinch=True)], 50)
+        held = tracker.update([], 150)
+        self.assertTrue(held["down"])
+        self.assertTrue(held["predicted"])
+        self.assertFalse(held["motion_tracked"])
+        self.assertAlmostEqual(held["x"], 0.6)
+        resumed = tracker.update([hand("a", 0.7, 0.5, pinch=True)], 200)
+        self.assertTrue(resumed["down"])
+        self.assertFalse(resumed["cancelled"])
+        self.assertAlmostEqual(resumed["x"], 0.7)
+
+    def test_long_dropout_cancels_and_requires_observed_release(self):
+        tracker = pointer()
+        tracker.update([hand("a", 0.5, 0.5, pinch=True)], 0)
+        expired = tracker.update([], 230)
+        self.assertFalse(expired["down"])
+        self.assertFalse(expired["visible"])
+        self.assertTrue(expired["cancelled"])
+        held = tracker.update([hand("b", 0.5, 0.5, pinch=True)], 300)
+        self.assertFalse(held["down"])
+        tracker.update([hand("b", 0.5, 0.5)], 330)
+        self.assertTrue(tracker.update([hand("b", 0.5, 0.5, pinch=True)], 360)["down"])
+
+    def test_release_during_gap_cancels_instead_of_clicking(self):
+        tracker = pointer()
+        tracker.update([hand("a", 0.5, 0.5, pinch=True)], 0)
+        tracker.update([], 50)
+        returned = tracker.update([hand("a", 0.5, 0.5)], 100)
+        self.assertFalse(returned["down"])
+        self.assertTrue(returned["cancelled"])
+
+    def test_camera_stall_cancels_even_if_same_identity_returns(self):
+        tracker = pointer()
+        tracker.update([hand("a", 0.5, 0.5, pinch=True)], 0)
+        resumed = tracker.update([hand("a", 0.7, 0.5, pinch=True)], 600)
+        self.assertTrue(resumed["cancelled"])
+        self.assertFalse(resumed["down"])
+
+    def test_identity_churn_cannot_accumulate_more_than_two_skeletons(self):
+        tracker = pointer()
+        for index in range(8):
+            identity = str(index)
+            packet = tracker.update([hand(identity, 0.5, 0.5)], index * 20)
+            self.assertLessEqual(len(packet["hands"]), 2)
+            self.assertLessEqual(len(tracker._last_hands), 2)
+            self.assertIn(identity, {skeleton["id"] for skeleton in packet["hands"]})
+
+    def test_fresh_observation_replaces_held_press_and_requires_release(self):
+        tracker = pointer(max_hands=1)
+        tracker.update([hand("old", 0.5, 0.5, pinch=True)], 0)
+        replaced = tracker.update([hand("new", 0.7, 0.5, pinch=True)], 30)
+        self.assertEqual(replaced["hand"], "new")
+        self.assertEqual([skeleton["id"] for skeleton in replaced["hands"]], ["new"])
+        self.assertTrue(replaced["cancelled"])
+        self.assertFalse(replaced["down"])
+        self.assertFalse(tracker.update([hand("new", 0.7, 0.5, pinch=True)], 60)["down"])
+        tracker.update([hand("new", 0.7, 0.5)], 90)
+        self.assertTrue(tracker.update([hand("new", 0.7, 0.5, pinch=True)], 120)["down"])
+
+    def test_observed_then_flow_hands_take_precedence_over_cached_holds(self):
+        tracker = pointer()
+        tracker.update([hand("held", 0.2, 0.5, pinch=True)], 0)
+        flow = {**hand("flow", 0.5, 0.5), "observed": False,
+                "tracking_source": "flow", "observation_timestamp": 0}
+        packet = tracker.update([flow, hand("real", 0.8, 0.5)], 30)
+        self.assertEqual([skeleton["id"] for skeleton in packet["hands"]], ["real", "flow"])
+        self.assertTrue(packet["cancelled"])
+        self.assertFalse(packet["down"])
+
+    def test_observed_hand_replaces_old_flow_identity_in_one_hand_mode(self):
+        tracker = pointer(max_hands=1)
+        tracker.update([hand("old", 0.3, 0.5, pinch=True)], 0)
+        flow = {**hand("old", 0.4, 0.5, pinch=True), "observed": False,
+                "tracking_source": "flow", "observation_timestamp": 0}
+        packet = tracker.update([flow, hand("new", 0.7, 0.5, pinch=True)], 30)
+        self.assertEqual([skeleton["id"] for skeleton in packet["hands"]], ["new"])
+        self.assertTrue(packet["cancelled"])
+        self.assertFalse(packet["down"])
+
+    def test_cancelled_pinch_requires_raw_release_not_unfinished_debounce(self):
+        tracker = pointer()
+        tracker.update([hand("a", 0.5, 0.5, pinch=True)], 0)
+        tracker.update([], 230)
+        # A new identity's first closed-finger sample has not yet debounced.
+        pending = {**hand("b", 0.5, 0.5), "pinch_released": False}
+        tracker.update([pending], 300)
+        held = {**hand("b", 0.5, 0.5, pinch=True), "pinch_released": False}
+        self.assertFalse(tracker.update([held], 360)["down"])
+        tracker.update([{**hand("b", 0.5, 0.5), "pinch_released": True}], 400)
+        self.assertTrue(tracker.update([held], 430)["down"])
+
+    def test_flow_moves_existing_drag_but_cannot_start_new_pinch(self):
+        tracker = pointer()
+        tracker.update([hand("a", 0.5, 0.5)], 0)
+        flowing = {**hand("a", 0.6, 0.5, pinch=True), "observed": False,
+                   "tracking_source": "flow", "observation_timestamp": 0}
+        hover = tracker.update([flowing], 30)
+        self.assertFalse(hover["down"])
+        self.assertTrue(hover["motion_tracked"])
+        self.assertAlmostEqual(hover["x"], 0.6)
+        tracker.update([hand("a", 0.6, 0.5, pinch=True)], 60)
+        flowing["landmarks"] = hand("a", 0.7, 0.5)["landmarks"]
+        dragged = tracker.update([flowing], 90)
+        self.assertTrue(dragged["down"])
+        self.assertAlmostEqual(dragged["x"], 0.7)
+
+    def test_flow_cannot_keep_a_press_alive_without_new_detector_observations(self):
+        tracker = pointer()
+        tracker.update([hand("a", 0.5, 0.5, pinch=True)], 0)
+        flowing = {**hand("a", 0.6, 0.5, pinch=True), "observed": False,
+                   "tracking_source": "flow", "observation_timestamp": 0}
+        self.assertTrue(tracker.update([flowing], 400)["down"])
+        expired = tracker.update([flowing], 450)
+        self.assertFalse(expired["down"])
+        self.assertTrue(expired["cancelled"])
+
+    def test_flow_and_missing_observations_cannot_create_swipes(self):
+        tracker = pointer()
+        tracker.update([hand("a", 0.2, 0.5, fingers=FINGERS_OPEN)], 0)
+        flow = {**hand("a", 0.7, 0.5, fingers=FINGERS_OPEN), "observed": False,
+                "tracking_source": "flow", "observation_timestamp": 0}
+        self.assertEqual(tracker.update([flow], 100)["swipe_id"], 0)
+        tracker.update([], 150)
+        self.assertEqual(tracker.update([hand("a", 0.9, 0.5, fingers=FINGERS_OPEN)], 200)["swipe_id"], 0)
+
 
 class SkeletonTests(unittest.TestCase):
     def test_every_hand_gets_21_screen_points_and_a_primary_flag(self):
@@ -114,10 +242,22 @@ class SkeletonTests(unittest.TestCase):
             xs.append(tracker.update([hand("a", 0.5 + wobble, 0.5)], i * 33)["hands"][0]["points"][0][0])
         self.assertLess((max(xs[30:]) - min(xs[30:])) * SCREEN[0], 2)
 
-    def test_lost_hand_drops_its_skeleton(self):
+    def test_lost_hand_holds_then_drops_its_skeleton(self):
         tracker = pointer()
+        original = tracker.update([hand("a", 0.5, 0.5)], 0)
+        held = tracker.update([], 33)
+        self.assertEqual(held["hands"][0]["points"], original["hands"][0]["points"])
+        self.assertTrue(held["hands"][0]["predicted"])
+        self.assertEqual(tracker.update([], 230)["hands"], [])
+
+    def test_short_loss_keeps_joint_and_pointer_filters(self):
+        tracker = HandPointer(reach=0.0)
         tracker.update([hand("a", 0.5, 0.5)], 0)
-        self.assertEqual(tracker.update([], 33)["hands"], [])
+        joint_filters, cursor_filter = tracker._joint_filters["a"], tracker._filter
+        tracker.update([], 33)
+        tracker.update([hand("a", 0.51, 0.5)], 66)
+        self.assertIs(tracker._joint_filters["a"], joint_filters)
+        self.assertIs(tracker._filter, cursor_filter)
 
 
 class UtilityTests(unittest.TestCase):
