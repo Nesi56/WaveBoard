@@ -123,21 +123,26 @@ fi
 mkdir -p -- "$waveboard_cache_dir"
 cd -- "$waveboard_project_dir"
 
-# Avoid attaching the kiosk to an unrelated service already occupying this port.
+# Avoid attaching the kiosk to an unrelated service already occupying this port on
+# either localhost address.
 python3 - "$waveboard_port" <<'PY'
+import errno
 import socket
 import sys
 
-try:
-    with socket.socket() as listener:
-        # Like the server: closed connections from the last run (TIME_WAIT) do not block
-        # the port, while a program still listening on it does.
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind(("127.0.0.1", int(sys.argv[1])))
-except OSError as error:
-    print(f"Cannot start WaveBoard on port {sys.argv[1]}: {error}", file=sys.stderr)
-    print("Close the existing server or select another WAVEBOARD_PORT.", file=sys.stderr)
-    raise SystemExit(1)
+for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+    try:
+        with socket.socket(family) as listener:
+            # Like the server: closed connections from the last run (TIME_WAIT) do not block
+            # the port, while a program still listening on it does.
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind((host, int(sys.argv[1])))
+    except OSError as error:
+        if family == socket.AF_INET6 and error.errno not in {errno.EADDRINUSE, errno.EACCES}:
+            continue  # no IPv6 on this computer
+        print(f"Cannot start WaveBoard on localhost port {sys.argv[1]}: {error}", file=sys.stderr)
+        print("Close the existing server or select another WAVEBOARD_PORT.", file=sys.stderr)
+        raise SystemExit(1)
 PY
 
 # Rewritten on every launch: no welcome, default-browser or privacy pages, no session
@@ -187,9 +192,9 @@ trap waveboard_cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-python3 -m waveboard --host 127.0.0.1 --port "$waveboard_port" "${waveboard_extra_args[@]}" >"$waveboard_cache_dir/server.log" 2>&1 &
+python3 -m waveboard --host localhost --port "$waveboard_port" "${waveboard_extra_args[@]}" >"$waveboard_cache_dir/server.log" 2>&1 &
 waveboard_server_pid=$!
-waveboard_url="http://127.0.0.1:$waveboard_port"
+waveboard_url="http://localhost:$waveboard_port"
 
 if ! python3 - "$waveboard_url/api/status" "$waveboard_server_pid" <<'PY'
 import json
@@ -228,8 +233,9 @@ if ((waveboard_hands)); then
     waveboard_hands_python="$(command -v python3)"
   fi
   read -r -a waveboard_hands_args <<<"${WAVEBOARD_HANDS_ARGS:-}"
-  # Loopback only; --allow-origin lets a page on a WAVEBOARD_PORT other than 8765 connect.
-  "$waveboard_hands_python" gesture-lab/server.py --allow-origin "$waveboard_url" "${waveboard_hands_args[@]}" \
+  # Localhost only; --allow-origin lets a page on a WAVEBOARD_PORT other than 8765 connect.
+  "$waveboard_hands_python" gesture-lab/server.py --allow-origin "$waveboard_url" \
+    --allow-origin "http://127.0.0.1:$waveboard_port" "${waveboard_hands_args[@]}" \
     >"$waveboard_cache_dir/hands.log" 2>&1 &
   waveboard_hands_pid=$!
   printf 'Hand control is starting. If no cursor appears, check %s/hands.log\n' "$waveboard_cache_dir"

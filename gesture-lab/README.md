@@ -7,7 +7,7 @@ The camera image never leaves this process, and nothing is recorded or uploaded:
 only hand positions go to the local page.
 
 ```text
-webcam -> tracker.py (MediaPipe, CPU) -> server.py (ws://127.0.0.1:8766) -> web/hands.js in the workspace
+webcam -> tracker.py (MediaPipe, CPU) -> server.py (ws://localhost:8766) -> web/hands.js in the workspace
 ```
 
 ## Set up on the Jetson
@@ -36,7 +36,7 @@ bash scripts/start-ubuntu.sh --hands --firefox  # Firefox kiosk
 
 Or run the two halves yourself: `python3 -m waveboard` in one terminal,
 `python gesture-lab/server.py` (in `vision-env`) in another, then open
-http://127.0.0.1:8765. Only one program can use the camera at a time.
+http://localhost:8765. Only one program can use the camera at a time.
 
 | Gesture | Effect in the workspace |
 | --- | --- |
@@ -86,7 +86,7 @@ WAVEBOARD_HANDS_ARGS="--camera /dev/video2 --detection-confidence 0.35" bash scr
 | `--processing-width` | full frame | Shrink frames to this width before MediaPipe |
 | `--detection-confidence` | 0.5 | Hand detection threshold |
 | `--reach` | 0.12 | Camera edge band mapped beyond the screen edges |
-| `--allow-origin` | | Another workspace page origin, e.g. `http://127.0.0.1:8770` |
+| `--allow-origin` | | Another workspace page origin, e.g. `http://localhost:8770` |
 
 Find the camera with `v4l2-ctl --list-devices` (`sudo apt install v4l-utils`).
 

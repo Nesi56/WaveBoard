@@ -9,7 +9,11 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import urlencode
 
-from waveboard.server import APIError, WaveBoardApp, WaveBoardServer, byte_range, confined_path
+import errno
+import socket
+
+from waveboard import server as server_module
+from waveboard.server import APIError, WaveBoardApp, WaveBoardServer, byte_range, confined_path, open_servers
 
 
 class PathAndRangeTests(unittest.TestCase):
@@ -193,6 +197,68 @@ class HTTPTests(unittest.TestCase):
         for body, headers, expected in (("{}", {}, 415), ("{", {"Content-Type": "application/json"}, 400), (json.dumps({"root": "custom", "path": "video.mp4"}), {"Content-Type": "application/json"}, 400)):
             status, _, _ = self.request("/api/presentations", method="POST", body=body, headers=headers)
             self.assertEqual(status, expected)
+
+
+class LocalhostTests(unittest.TestCase):
+    """localhost means both loopback addresses, so a browser's localhost always reaches WaveBoard."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.app = WaveBoardApp(roots=[Path(self.temporary.name)])
+        self.addCleanup(self.temporary.cleanup)
+        self.addCleanup(self.app.close)
+
+    def close(self, servers):
+        for server in servers:
+            server.server_close()
+
+    def port_is_free(self, port):
+        with socket.socket() as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                return False
+        return True
+
+    def test_localhost_listens_on_ipv4_and_ipv6_loopback_on_one_port(self):
+        opened = []
+
+        class FakeIPv6:
+            def __init__(self, address, app):
+                opened.append(address)
+
+            def server_close(self):
+                pass
+
+        with patch.object(server_module, "WaveBoardServer6", FakeIPv6):
+            servers = open_servers("localhost", 0, self.app)
+        self.addCleanup(self.close, servers)
+        self.assertEqual(servers[0].server_address[0], "127.0.0.1")
+        self.assertEqual(opened, [("::1", servers[0].server_port)])
+        self.assertEqual(len(servers), 2)
+
+    def test_machine_without_ipv6_still_serves_localhost(self):
+        error = OSError(errno.EAFNOSUPPORT, "Address family not supported by protocol")
+        with patch.object(server_module, "WaveBoardServer6", side_effect=error):
+            servers = open_servers("localhost", 0, self.app)
+        self.addCleanup(self.close, servers)
+        self.assertEqual([s.server_address[0] for s in servers], ["127.0.0.1"])
+
+    def test_another_program_on_ipv6_localhost_is_an_error(self):
+        # Otherwise a browser could reach that program instead of WaveBoard at localhost.
+        with socket.socket() as finder:
+            finder.bind(("127.0.0.1", 0))
+            port = finder.getsockname()[1]
+        error = OSError(errno.EADDRINUSE, "Address already in use")
+        with patch.object(server_module, "WaveBoardServer6", side_effect=error), self.assertRaises(OSError):
+            open_servers("localhost", port, self.app)
+        self.assertTrue(self.port_is_free(port))
+
+    def test_other_hosts_are_used_as_given(self):
+        servers = open_servers("127.0.0.1", 0, self.app)
+        self.addCleanup(self.close, servers)
+        self.assertEqual([s.server_address[0] for s in servers], ["127.0.0.1"])
 
 
 class PresentationConversionTests(unittest.TestCase):

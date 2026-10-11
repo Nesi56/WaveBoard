@@ -240,7 +240,7 @@ function validPointer(pointer) {
 function connect() {
   let socket;
   try {
-    socket = new WebSocket(`ws://127.0.0.1:${PORT}`);
+    socket = new WebSocket(`ws://localhost:${PORT}`);
   } catch {
     setTimeout(connect, RETRY_MS);
     return;

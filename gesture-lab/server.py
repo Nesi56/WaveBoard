@@ -1,13 +1,14 @@
 """Hand-tracking stream for the WaveBoard workspace: camera -> MediaPipe -> local WebSocket.
 
 Start it next to ``python -m waveboard`` (or let ``scripts/start-ubuntu.sh --hands``
-start both). web/hands.js connects to ws://127.0.0.1:8766, draws the hand skeletons
+start both). web/hands.js connects to ws://localhost:8766, draws the hand skeletons
 and turns the pointer into touch input.
 """
 import argparse
 import asyncio
 import json
 import signal
+import socket
 import threading
 import time
 
@@ -15,7 +16,17 @@ from websockets.asyncio.server import serve
 
 # The WaveBoard workspace (python -m waveboard) serves on 8765, so the stream uses 8766.
 BRIDGE_PORT = 8766
-ALLOWED_ORIGINS = [f"http://{host}:8765" for host in ("127.0.0.1", "localhost")]
+ALLOWED_ORIGINS = [f"http://{host}:8765" for host in ("localhost", "127.0.0.1")]
+
+
+def loopback_hosts():
+    """Both loopback addresses, as browsers may use either for localhost; 127.0.0.1 alone without IPv6."""
+    try:
+        with socket.socket(socket.AF_INET6) as probe:
+            probe.bind(("::1", 0))
+    except OSError:
+        return ["127.0.0.1"]
+    return ["127.0.0.1", "::1"]
 
 
 class LatestState:
@@ -70,7 +81,7 @@ async def bridge(state, stop, origins=ALLOWED_ORIGINS):
                 print("Workspace connection ended:", exc)
 
     # No LAN exposure. Only the local workspace page can read hand positions.
-    async with serve(handler, "127.0.0.1", BRIDGE_PORT, origins=origins,
+    async with serve(handler, loopback_hosts(), BRIDGE_PORT, origins=origins,
                      max_size=1024, max_queue=1, compression=None):
         while not stop.is_set():
             await asyncio.sleep(0.1)
@@ -81,7 +92,7 @@ def main():
     parser = argparse.ArgumentParser(description="Hand-tracking stream for the WaveBoard workspace.")
     tracker.register_arguments(parser)
     parser.add_argument("--allow-origin", action="append", default=[], metavar="URL",
-                        help="also stream hands to this page origin, e.g. http://127.0.0.1:8770 for "
+                        help="also stream hands to this page origin, e.g. http://localhost:8770 for "
                              "a WaveBoard workspace on another port; may be repeated")
     args = parser.parse_args()
     state = LatestState()
@@ -110,8 +121,8 @@ def main():
     worker = threading.Thread(target=tracking_worker, daemon=True)
     worker.start()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    print(f"Hand tracking for the WaveBoard workspace on ws://127.0.0.1:{BRIDGE_PORT}.", flush=True)
-    print("Open the workspace (python3 -m waveboard, http://127.0.0.1:8765). Press Ctrl+C here to stop.", flush=True)
+    print(f"Hand tracking for the WaveBoard workspace on ws://localhost:{BRIDGE_PORT}.", flush=True)
+    print("Open the workspace (python3 -m waveboard, http://localhost:8765). Press Ctrl+C here to stop.", flush=True)
     try:
         asyncio.run(bridge(state, stop, ALLOWED_ORIGINS + [o.rstrip("/") for o in args.allow_origin]))
     except KeyboardInterrupt:

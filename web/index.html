@@ -23,7 +23,7 @@
         note.setAttribute("role", "alert");
         note.textContent = "WaveBoard could not start in this browser" +
           (waveboardStartError ? " (" + waveboardStartError + ")" : "") +
-          ". Use a current Chrome, Edge, Chromium or Firefox, open http://127.0.0.1:8765 " +
+          ". Use a current Chrome, Edge, Chromium or Firefox, open http://localhost:8765 " +
           "after starting python -m waveboard, and reload.";
         note.style.cssText = "position:fixed;left:16px;right:16px;bottom:16px;margin:0;padding:14px 18px;" +
           "border-radius:14px;background:#304b3b;color:#fffefa;font:16px/1.4 Arial,sans-serif;z-index:2147483647";

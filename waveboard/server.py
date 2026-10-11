@@ -10,6 +10,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import errno
 import getpass
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -285,6 +286,28 @@ class WaveBoardServer(ThreadingHTTPServer):
         super().__init__(address, WaveBoardHandler)
 
 
+class WaveBoardServer6(WaveBoardServer):
+    address_family = socket.AF_INET6
+
+
+def open_servers(host: str, port: int, app: WaveBoardApp) -> list[WaveBoardServer]:
+    """Listen on host:port. "localhost" means both loopback addresses, 127.0.0.1 and ::1.
+
+    Browsers may try either address for localhost, so both must reach WaveBoard and
+    not another program. A machine without IPv6 only gets 127.0.0.1.
+    """
+    if host != "localhost":
+        return [WaveBoardServer((host, port), app)]
+    servers = [WaveBoardServer(("127.0.0.1", port), app)]
+    try:
+        servers.append(WaveBoardServer6(("::1", servers[0].server_port), app))
+    except OSError as error:
+        if error.errno in {errno.EADDRINUSE, errno.EACCES}:
+            servers[0].server_close()
+            raise
+    return servers
+
+
 class WaveBoardHandler(BaseHTTPRequestHandler):
     server: WaveBoardServer
     server_version = "WaveBoard/" + __version__
@@ -482,7 +505,8 @@ class WaveBoardHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="WaveBoard local projector workspace")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
+    parser.add_argument("--host", default="localhost",
+                        help="Bind address (default: localhost, meaning 127.0.0.1 and ::1 on this computer only)")
     parser.add_argument("--port", type=int, default=8765, help="HTTP port (default: 8765)")
     parser.add_argument("--root", type=Path, action="append", help="Restrict file browsing to this directory; may be repeated")
     args = parser.parse_args()
@@ -490,16 +514,22 @@ def main() -> None:
         parser.error("Every --root must be an existing directory.")
     app = WaveBoardApp(roots=args.root)
     try:
-        server = WaveBoardServer((args.host, args.port), app)
+        server, *others = open_servers(args.host, args.port, app)
     except OSError as error:
         app.close()
-        parser.exit(1, f"Could not start WaveBoard: {error}\n")
-    print(f"WaveBoard is ready at http://{args.host}:{server.server_port}")
+        parser.exit(1, f"Could not start WaveBoard on port {args.port}: {error}\n")
+    for other in others:
+        threading.Thread(target=other.serve_forever, kwargs={"poll_interval": 0.25}, daemon=True).start()
+    host = f"[{args.host}]" if ":" in args.host else args.host
+    print(f"WaveBoard is ready at http://{host}:{server.server_port}")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:
         print("\nStopping WaveBoard…")
     finally:
+        for other in others:
+            other.shutdown()
+            other.server_close()
         server.server_close()
         app.close()

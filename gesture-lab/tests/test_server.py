@@ -1,9 +1,14 @@
-"""Latest-only bridge state; no sockets or camera packages are needed."""
+"""Latest-only bridge state and the localhost stream; no camera packages are needed."""
 
+import asyncio
+import json
+import socket
+import threading
 import unittest
 from unittest.mock import patch
 
-from server import LatestState
+import server
+from server import LatestState, loopback_hosts
 
 
 class LatestStateTests(unittest.TestCase):
@@ -58,3 +63,36 @@ class LatestStateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LocalhostStreamTests(unittest.TestCase):
+    def test_loopback_hosts_without_ipv6_is_ipv4_only(self):
+        with patch("server.socket.socket", side_effect=OSError(97, "Address family not supported")):
+            self.assertEqual(loopback_hosts(), ["127.0.0.1"])
+
+    def test_workspace_page_on_localhost_receives_the_stream(self):
+        from websockets.sync.client import connect
+
+        with socket.socket() as finder:
+            finder.bind(("127.0.0.1", 0))
+            port = finder.getsockname()[1]
+        state, stop, ready = LatestState(), threading.Event(), threading.Event()
+
+        def run_bridge():
+            async def main():
+                task = asyncio.ensure_future(server.bridge(state, stop))
+                await asyncio.sleep(0.3)
+                ready.set()
+                await task
+            asyncio.run(main())
+
+        with patch.object(server, "BRIDGE_PORT", port):
+            thread = threading.Thread(target=run_bridge, daemon=True)
+            thread.start()
+            self.assertTrue(ready.wait(5))
+            try:
+                with connect(f"ws://localhost:{port}", origin="http://localhost:8765", open_timeout=5) as page:
+                    self.assertEqual(json.loads(page.recv(timeout=5))["type"], "status")
+            finally:
+                stop.set()
+                thread.join(timeout=5)

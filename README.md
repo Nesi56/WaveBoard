@@ -89,9 +89,11 @@ edges without your hand leaving the camera's view. For the most accurate trackin
 
 To run the two halves by hand instead of with the launcher, start
 `python3 -m waveboard` in one terminal and `python gesture-lab/server.py` (in
-`vision-env`) in another, then open http://127.0.0.1:8765. Ports: the workspace
-uses **8765** and the hand-tracking stream **8766**, both on loopback only. If you move the workspace to another port, start the
-tracker with `--allow-origin http://127.0.0.1:PORT` (the launcher does this for you).
+`vision-env`) in another, then open http://localhost:8765. Everything stays on this
+computer: the workspace uses **localhost:8765** and the hand-tracking stream
+**localhost:8766**, and neither can be reached from the network. If you move the workspace
+to another port, start the tracker with `--allow-origin http://localhost:PORT` (the
+launcher does this for you).
 
 Hand input reaches the page as synthetic pointer events, which browsers do not
 treat as a real user gesture. **Full screen** and **Present** therefore need the
@@ -108,7 +110,7 @@ WaveBoard folder:
 python -m waveboard       # python3 on macOS and Linux
 ```
 
-Then open **[http://127.0.0.1:8765](http://127.0.0.1:8765)** in Chrome, Edge, Chromium or
+Then open **[http://localhost:8765](http://localhost:8765)** in Chrome, Edge, Chromium or
 Firefox. Open that address, not `web/index.html` from the file manager: the page needs the
 server. Leave the terminal running; `Ctrl+C` stops the server.
 
@@ -249,7 +251,7 @@ python3 -m waveboard --root "$HOME/Documents" --root /media/yourname/USB
 The server's command-line options are:
 
 ```text
-python3 -m waveboard [--host 127.0.0.1] [--port 8765] [--root DIRECTORY]...
+python3 -m waveboard [--host localhost] [--port 8765] [--root DIRECTORY]...
 ```
 
 The kiosk launcher accepts repeated `--root` arguments. Set its port through `WAVEBOARD_PORT`:
@@ -273,7 +275,7 @@ On Windows, the menu, file browser, whiteboard, 3D space, and supported videos c
 ## Connecting other trackers
 
 Hand tracking from `gesture-lab/` is already connected: `web/hands.js` receives
-the tracker's pointer over a local WebSocket (`ws://127.0.0.1:8766`, or the port in
+the tracker's pointer over a local WebSocket (`ws://localhost:8766`, or the port in
 the page's `?hands-port=` parameter) and calls the bridge below. Another tracker
 can use the same bridge, or emit OS input instead.
 
