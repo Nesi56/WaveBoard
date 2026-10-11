@@ -104,6 +104,9 @@ window.addEventListener("waveboard-tracking-stats", event => {
 window.addEventListener("waveboard-alignment-status", () => updateAlignmentSettings());
 function updateAlignmentSettings() {
   const settings = window.WaveBoardHands?.getSettings();
+  if ($("#projector-mode")) $("#projector-mode").checked = settings?.enabled === true;
+  for (const id of ["#align-hands", "#calibrate-hands-button"])
+    if ($(id)) $(id).disabled = !settings?.enabled;
   if ($("#projection-alignment-status")) $("#projection-alignment-status").textContent = settings?.status || "Waiting for hand controls";
   if ($("#recheck-projection")) $("#recheck-projection").disabled = !settings?.enabled || settings?.handCalibrated;
   if ($("#reset-hand-calibration")) $("#reset-hand-calibration").disabled = !settings?.handCalibrated;
@@ -1081,13 +1084,12 @@ $("#settings-button").onclick = async () => {
   const handSettings = window.WaveBoardHands?.getSettings();
   modal(
     "Settings",
-    `<div class="dialog-actions">${button("align-hands", "Align hands", "touch")}${button("reset-hand-calibration", "Reset alignment", "rotate", "secondary")}</div>
+    `<label class="settings-row"><span>Projector mode</span><input type="checkbox" id="projector-mode" ${handSettings?.enabled ? "checked" : ""}></label>
+    <p class="dialog-copy">Mirror hands and align them to the projection. Turn off to use the original hand controls.</p>
+    <div class="dialog-actions">${button("align-hands", "Align hands", "touch")}${button("reset-hand-calibration", "Reset alignment", "rotate", "secondary")}</div>
     <p class="dialog-copy">Match your index fingertip to 5 targets. Stay at your usual distance from the screen.</p>
     <p id="projection-alignment-status" class="dialog-copy" role="status"></p>
-    <label class="settings-row"><span>Mirror hands</span><input type="checkbox" id="mirror-hands" ${handSettings?.mirrored !== false ? "checked" : ""}></label>
-    <p class="dialog-copy">For use before calibration. Align hands sets the direction and scale.</p>
-    <label class="settings-row"><span>Screen corner markers</span><input type="checkbox" id="align-projection" ${handSettings?.enabled ? "checked" : ""}></label>
-    <p class="dialog-copy">Optional for hands at the screen surface. For hands in the air, use Align hands.</p>
+    <p class="dialog-copy">Corner markers align hands at the screen surface. For hands in the air, use Align hands.</p>
     <div class="dialog-actions">${button("recheck-projection", "Recheck corners", "rotate", "secondary")}</div>
     <label class="settings-row"><span>Extra contrast</span><input type="checkbox" id="contrast-setting" ${document.body.classList.contains("high-contrast") ? "checked" : ""}></label>
     <div class="settings-row"><span>Hand updates</span><span id="hand-update-rate" class="status-badge"></span></div>
@@ -1097,8 +1099,7 @@ $("#settings-button").onclick = async () => {
   updateTrackingStats();
   $("#align-hands").onclick = alignHands;
   $("#reset-hand-calibration").onclick = () => { window.WaveBoardHands?.clearCalibration(); updateAlignmentSettings(); };
-  $("#mirror-hands").onchange = event => window.WaveBoardHands?.configure({ mirrored: event.target.checked });
-  $("#align-projection").onchange = event => window.WaveBoardHands?.configure({ enabled: event.target.checked });
+  $("#projector-mode").onchange = event => window.WaveBoardHands?.configure({ enabled: event.target.checked });
   $("#recheck-projection").onclick = () => window.WaveBoardHands?.realign();
   updateAlignmentSettings();
   if (window.WaveBoardDesktop) {

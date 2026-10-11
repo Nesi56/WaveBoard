@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 const source = (await readFile(new URL('../web/hands.js', import.meta.url), 'utf8')).replace(/^import .*projection\.js.*;$/m, '');
 const mapping = await import(`data:text/javascript;base64,${Buffer.from(await readFile(new URL('../web/projection.js', import.meta.url), 'utf8')).toString('base64')}`);
-async function trackerFixture(preferences = { mirrored: false }) {
+async function trackerFixture(preferences = null) {
   let now = 1000, receive;
   let saved = preferences;
   const frames = [], intervals = [], inputs = [], elements = [], arcs = [], keys = [], listeners = {};
@@ -98,8 +98,20 @@ test('batched drag excursion is consumed before release returns to start', async
   assert.equal(f.inputs[release].x, 100);
 });
 
-test('default mirror reverses skeleton, click and swipe together', async () => {
-  const f = await trackerFixture(null);
+test('default mode preserves the original skeleton, click and swipe orientation', async () => {
+  const f = await trackerFixture();
+  assert.equal(f.controls.getSettings().enabled, false);
+  const hand = { id: 'right', primary: true, points: Array.from({ length: 21 }, () => [0.2, 0.4]) };
+  f.emit({ x: 0.2, y: 0.4, hands: [hand] }); f.tick();
+  assert.equal(f.arcs[0][0], 200);
+  f.emit({ x: 0.2, y: 0.4, down: true });
+  assert.equal(f.inputs.find(e => e.type === 'down').x, 200);
+  f.emit({ swipe_id: 1, swipe: 1 });
+  assert.deepEqual(f.keys, ['ArrowLeft']);
+});
+
+test('projector mode reverses skeleton, click and swipe together', async () => {
+  const f = await trackerFixture({ projectorMode: true });
   const hand = { id: 'right', primary: true, points: Array.from({ length: 21 }, () => [0.2, 0.4]) };
   f.emit({ x: 0.2, y: 0.4, hands: [hand] }); f.tick();
   assert.equal(f.arcs[0][0], 800);
@@ -112,7 +124,7 @@ test('default mirror reverses skeleton, click and swipe together', async () => {
 test('changing alignment during a pinch cancels and requires an open hand', async () => {
   const f = await trackerFixture();
   f.emit({ down: true });
-  f.controls.configure({ mirrored: true });
+  f.controls.configure({ enabled: true });
   assert.equal(f.inputs.at(-1).type, 'cancel');
   f.emit({ down: true });
   assert.equal(f.inputs.filter(e => e.type === 'down').length, 1);
@@ -131,7 +143,7 @@ function calibrate(f, patch = {}) {
 }
 
 test('corner calibration uses raw coordinates for both skeleton and cursor with no extra mirror', async () => {
-  const f = await trackerFixture({ mirrored: true, enabled: true });
+  const f = await trackerFixture({ projectorMode: true });
   calibrate(f);
   assert.equal(f.controls.getSettings().status, 'Aligned to projection');
   f.emit({ x: 0.01, y: 0.01, camera_x: 0.25, camera_y: 0.4, hands: [{
@@ -150,7 +162,7 @@ test('corner calibration uses raw coordinates for both skeleton and cursor with 
 });
 
 test('locking corners and losing calibration cancel presses without a click', async () => {
-  const f = await trackerFixture({ enabled: true, mirrored: false });
+  const f = await trackerFixture({ projectorMode: true });
   f.emit({ down: true });
   calibrate(f, { down: true });
   assert.equal(f.inputs.filter(e => e.type === 'cancel').length, 1);
@@ -163,7 +175,7 @@ test('locking corners and losing calibration cancel presses without a click', as
 });
 
 test('outside primary cannot swipe or hide an inside secondary skeleton', async () => {
-  const f = await trackerFixture({ enabled: true });
+  const f = await trackerFixture({ projectorMode: true });
   calibrate(f);
   f.emit({ camera_x: 1.2, camera_y: 0.4, swipe_id: 1, swipe: 1,
     camera_swipe: [[1.1, 0.4], [1.2, 0.4]], hands: [{
@@ -189,6 +201,7 @@ function fingertipPacket(point, down) {
 const handCamera = ([x, y]) => [0.15 + 1.1 * (x - 0.15), y];
 function fitHand(f) {
   let timestamp = 1000;
+  f.controls.configure({ enabled: true });
   f.controls.startCalibration();
   for (const point of mapping.HAND_TARGETS) {
     f.emit(fingertipPacket(handCamera(point), false), { timestamp });
@@ -234,11 +247,75 @@ test('cancelled calibration keeps prior fit and camera geometry changes invalida
 });
 
 test('open-hand swipes during calibration never replay into the workspace', async () => {
-  const f = await trackerFixture();
+  const f = await trackerFixture({ projectorMode: true });
   f.emit({ swipe_id: 0 });
   f.controls.startCalibration();
   f.emit({ ...fingertipPacket([0.2, 0.2], false), swipe_id: 1, swipe: 1 }, { timestamp: 1000 });
   f.elements.find(el => el.className === 'button secondary calibration-cancel' && el.parentElement.open).onclick();
   f.emit({ swipe_id: 1, swipe: 1 });
   assert.deepEqual(f.keys, []);
+});
+
+test('turning projector mode off restores original coordinates and retains the fit for later', async () => {
+  const f = await trackerFixture();
+  fitHand(f);
+  const fitted = f.saved().calibration;
+  f.controls.configure({ enabled: false });
+  assert.equal(f.controls.getSettings().handCalibrated, false);
+  assert.equal(f.saved().projectorMode, false);
+  assert.deepEqual(f.saved().calibration, fitted);
+  const hand = { id: 'right', primary: true, points: Array.from({ length: 21 }, () => [0.2, 0.4]),
+    camera_points: Array.from({ length: 21 }, () => handCamera([0.85, 0.5])) };
+  f.emit({ x: 0.3, y: 0.6, camera_x: 0.99, camera_y: 0.99, hands: [hand] }); f.tick();
+  assert.equal(f.arcs.at(-1)[0], 200);
+  f.emit({ x: 0.3, y: 0.6, down: true, hands: [hand] });
+  assert.equal(f.inputs.find(e => e.type === 'down').x, 300, 'off uses the original midpoint cursor instead of calibrated fingertip');
+  f.emit({ swipe_id: 1, swipe: 1 });
+  assert.deepEqual(f.keys, ['ArrowLeft']);
+  const restoredOff = await trackerFixture(f.saved());
+  assert.equal(restoredOff.controls.getSettings().enabled, false);
+  assert.equal(restoredOff.controls.getSettings().handCalibrated, false);
+  restoredOff.controls.configure({ enabled: true });
+  assert.equal(restoredOff.controls.getSettings().handCalibrated, true);
+  restoredOff.emit(fingertipPacket(handCamera([0.85, 0.5]), false)); restoredOff.tick();
+  restoredOff.emit(fingertipPacket(handCamera([0.85, 0.5]), true));
+  assert.ok(Math.abs(restoredOff.inputs.find(e => e.type === 'down').x - 850) < 1e-6);
+});
+
+test('legacy preferences migrate projection intent but never enable mode for an old mirror setting alone', async () => {
+  for (const mirrored of [true, false]) {
+    const original = await trackerFixture({ mirrored });
+    assert.equal(original.controls.getSettings().enabled, false);
+  }
+  const legacy = await trackerFixture({ enabled: true, mirrored: false });
+  assert.equal(legacy.controls.getSettings().enabled, true);
+  assert.equal(legacy.controls.getSettings().mirrored, true);
+  const fitted = await trackerFixture();
+  fitHand(fitted);
+  const calibration = fitted.saved().calibration;
+  const legacyFit = await trackerFixture({ enabled: false, mirrored: false, calibration });
+  assert.equal(legacyFit.controls.getSettings().enabled, true);
+  assert.equal(legacyFit.controls.getSettings().handCalibrated, true);
+  const explicitlyOff = await trackerFixture({ projectorMode: false, enabled: true, mirrored: true, calibration });
+  assert.equal(explicitlyOff.controls.getSettings().enabled, false);
+  assert.equal(explicitlyOff.controls.getSettings().handCalibrated, false);
+});
+
+test('calibration cannot start outside projector mode and disabling mode cancels an active pass', async () => {
+  const f = await trackerFixture();
+  f.controls.startCalibration();
+  assert.equal(f.elements.some(el => el.tag === 'dialog' && el.open), false);
+  fitHand(f);
+  const fitted = f.saved().calibration;
+  f.controls.startCalibration();
+  assert.equal(f.elements.some(el => el.tag === 'dialog' && el.open), true);
+  f.controls.configure({ enabled: false });
+  assert.equal(f.elements.some(el => el.tag === 'dialog' && el.open), false);
+  assert.equal(f.controls.getSettings().handCalibrated, false);
+  assert.deepEqual(f.saved().calibration, fitted);
+  f.emit({ down: true, x: 0.3 });
+  assert.equal(f.inputs.length, 0, 'held calibration pinch cannot activate the normal workspace');
+  f.emit({ down: false, x: 0.3 });
+  f.emit({ down: true, x: 0.3 });
+  assert.equal(f.inputs.find(e => e.type === 'down').x, 300);
 });

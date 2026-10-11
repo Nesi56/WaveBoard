@@ -12,8 +12,9 @@ import { ProjectionMap, HandCalibration, HAND_TARGETS, MARKER_CENTERS, markerSVG
 let handPreferences = {};
 try { handPreferences = JSON.parse(localStorage.getItem("waveboard-hand-alignment") || "{}"); } catch {}
 const projection = new ProjectionMap({
-  mirrored: handPreferences?.mirrored !== false,
-  enabled: handPreferences?.enabled === true,
+  // Migrate an explicitly enabled alignment or saved fit, not the old default mirror.
+  enabled: typeof handPreferences?.projectorMode === 'boolean' ? handPreferences.projectorMode :
+    handPreferences?.enabled === true || Boolean(handPreferences?.calibration),
 });
 const savedCalibration = handPreferences?.calibration;
 if (savedCalibration?.width === window.innerWidth && savedCalibration?.height === window.innerHeight)
@@ -111,7 +112,7 @@ function savePreferences() {
   const calibration = projection.handCalibration ? { ...projection.handCalibration,
     width: window.innerWidth, height: window.innerHeight, camera: cameraGeometry } : null;
   try { localStorage.setItem("waveboard-hand-alignment", JSON.stringify({
-    mirrored: projection.mirrored, enabled: projection.enabled, calibration,
+    projectorMode: projection.enabled, calibration,
   })); } catch {}
 }
 
@@ -137,9 +138,10 @@ function mappingChanged() {
 }
 window.WaveBoardHands = Object.freeze({
   getSettings: () => ({ mirrored: projection.mirrored, enabled: projection.enabled, status: projection.status,
-    handCalibrated: Boolean(projection.handCalibration) }),
+    handCalibrated: projection.handCalibrated }),
   configure(options) {
     projection.configure(options);
+    if (!projection.enabled) finishCalibration();
     mappingChanged();
     alignmentStatus();
     placeLayer();
@@ -227,7 +229,7 @@ function finishCalibration() {
 }
 
 function startCalibration() {
-  if (calibrationSession) return;
+  if (!projection.enabled || calibrationSession) return;
   hide();
   const dialog = document.createElement('dialog');
   dialog.className = 'hand-calibration';
@@ -312,7 +314,7 @@ function apply(pointer) {
   if (newSwipe) lastSwipe = pointer.swipe_id;
   if (!pointer.visible || document.hidden) return hide();
   const fingertip = pointer.hands?.find(hand => hand.id === pointer.hand)?.camera_points?.[8];
-  const mapped = projection.handCalibration ? (fingertip ? projection.cameraPoint(...fingertip) : null) :
+  const mapped = projection.handCalibrated ? (fingertip ? projection.cameraPoint(...fingertip) : null) :
     projection.point(pointer.x, pointer.y, pointer.camera_x, pointer.camera_y);
   placeLayer();
   targets.clear();

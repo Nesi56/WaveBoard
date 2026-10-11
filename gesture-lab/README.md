@@ -56,9 +56,15 @@ into the folder currently shown. **Save** writes a PNG directly to
 3D zoom; **Settings → Close WaveBoard** closes the app after an on-screen
 confirmation. No operating-system file dialog is required during these flows.
 
-## Align hands to the projection
+## Projector mode
 
-For hands held in the air, use **Menu → Align hands**. Four deliberate, stable
+**Settings → Projector mode** combines hand mirroring and projection alignment.
+It is off by default, preserving the original backend cursor, skeleton, and
+swipe coordinates. Turning it off bypasses projection mapping while keeping a
+saved hand calibration for the next time you enable it.
+
+For hands held in the air, enable Projector mode, then use **Menu → Align hands**.
+Align hands is available only while Projector mode is on. Four deliberate, stable
 pinches measure the index fingertip (`camera_points[8]`) at on-screen targets;
 a fifth target validates the center. Stay at your normal working distance and
 viewing position. Open the hand between targets. Flow and predicted frames do
@@ -66,21 +72,21 @@ not count as samples; identity changes and tracking gaps reset the current hold.
 An inconsistent center or collapsed set of targets is rejected.
 
 The resulting camera-to-screen mapping corrects scale, perspective and offset at
-that working position. It takes priority over the corner mapping for skeletons,
-swipes and the cursor; the cursor uses the index fingertip with this mode. The
+that working position. In Projector mode, it takes priority over the corner mapping
+for skeletons, swipes and the cursor; the cursor uses the index fingertip with this mode. The
 calibration is saved locally with viewport dimensions and camera resolution.
 Resize/resolution changes invalidate it. Recalibrate after moving the setup or
 changing your standing position. This cannot track changing depth automatically.
 The calibration flow consumes all gestures without passing clicks to the workspace.
 
-**Settings → Mirror hands** is enabled by default. The tracker internally uses
-mirrored camera images; the workspace reverses its manual mapping for a camera
-beside the projector facing the screen. The skeleton, cursor, and swipes share
-that direction. Turn the switch off for a setup that needs the opposite direction.
+Before alignment, Projector mode reverses the manual mapping for a camera beside
+the projector facing the screen. The skeleton, cursor, and swipes share that
+direction. Calibration sets orientation automatically, without a second mirror.
 
-For hands near the screen surface, enable **Settings → Screen corner markers** to display four distinct corner
-markers. Keep the camera beside the projector with both the hands and the entire
-projected screen in view. Three steady detections establish a perspective mapping
+Projector mode displays four distinct corner markers when no hand calibration is
+active. For hands near the screen surface, keep the camera beside the projector
+with both the hands and the entire projected screen in view. Three steady
+detections establish a perspective mapping
 from camera coordinates to the projection; status then reads **Aligned to
 projection**. The markers stay visible so the mapping can adjust if the setup moves.
 Calibration sets orientation automatically and bypasses the manual crop/mirror.

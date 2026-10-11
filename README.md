@@ -124,9 +124,15 @@ instead. **3D** includes menu buttons for zooming without a mouse wheel.
 
 Tap opens controls and items; press and hold exposes details where offered. Drawing and 3D orbiting use a held pointer while moving. With hand tracking, a pinch is the tap and a held pinch is the held pointer.
 
-### Hand mirroring and projection alignment
+### Projector mode
 
-For hands held **in the air**, use **Menu → Align hands** (also in Settings).
+Enable **Settings → Projector mode** to mirror the hands and align them with the
+projection. It is off by default: with it off, the skeleton, cursor, and swipes
+use the original hand controls, without added mirroring or projection mapping.
+Turning it off keeps a saved hand calibration for the next time you enable it.
+
+For hands held **in the air**, enable Projector mode, then use **Menu → Align hands**
+(also in Settings). Align hands is available only while Projector mode is on.
 Enter fullscreen first, stand where you normally work, and keep the same hand
 distance and viewing position throughout calibration. Place your index fingertip
 over each of the four targets, pinch and hold still until it advances, then open
@@ -140,8 +146,8 @@ the same index fingertip as calibration, and every skeleton joint uses the same
 mapping. A failed center check asks you to retry without replacing a previous
 alignment. **Cancel** or **Escape** leaves the previous alignment intact.
 
-Hand calibration is saved locally and takes priority over screen corner markers.
-It does not disappear when a marker is covered. **Settings → Reset alignment**
+Hand calibration is saved locally and, in Projector mode, takes priority over
+screen corner markers. It does not disappear when a marker is covered. **Settings → Reset alignment**
 removes it. Resizing the workspace or changing camera resolution clears it;
 run **Align hands** again after moving the camera, projector, or your working
 position. This is still a mapping at one working depth, not automatic 3D sensing.
@@ -150,18 +156,18 @@ The interface uses larger text and controls for 480p projectors: 26px body text,
 28px menu text, and generous buttons. Long menus and Settings scroll instead of
 reducing the text size.
 
-**Settings → Mirror hands** reverses the skeleton, cursor, and horizontal gestures
-together. It is on by default for a camera facing the projection. Turn it off if
-your camera setup moves the overlay in the wrong direction before calibration.
+Projector mode mirrors the skeleton, cursor, and horizontal gestures together
+before alignment. A successful calibration determines orientation itself, so the
+result is not mirrored a second time.
 
-For hands close to the actual screen surface, enable **Settings → Screen corner markers** to show four black-and-white
-corner markers. The camera detects their identities and maps the hand positions
-to the projected area, correcting position, scale, perspective, and orientation.
+Projector mode also shows four black-and-white corner markers when no hand
+calibration is active. For hands close to the actual screen surface, the camera
+detects their identities and maps the hand positions to the projected area,
+correcting position, scale, perspective, and orientation.
 Wait for **Aligned to projection**; all four markers must be visible and steady
 across three scans. The markers remain visible to track movement of the setup.
-Automatic alignment determines orientation itself; the mirror switch applies to
-uncalibrated alignment. Preferences are saved locally, but corner calibration is
-measured again each session and after resizing. **Recheck corners** starts a fresh
+Preferences are saved locally, but corner calibration is measured again each
+session and after resizing. **Recheck corners** starts a fresh
 scan. Corner markers hide behind menus and dialogs while their alignment is held.
 
 Keep the camera close to the projector when using corner markers. Corner detection

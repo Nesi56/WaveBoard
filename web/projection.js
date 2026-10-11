@@ -164,8 +164,7 @@ export class HandCalibration {
 }
 
 export class ProjectionMap {
-  constructor({ mirrored = true, enabled = false } = {}) {
-    this.mirrored = mirrored;
+  constructor({ enabled = false } = {}) {
     this.enabled = enabled;
     this.revision = 0;
     this.handMatrix = null;
@@ -219,9 +218,9 @@ export class ProjectionMap {
     this.handCalibration = null;
     this.revision++;
   }
-  configure({ mirrored = this.mirrored, enabled = this.enabled }) {
-    if (mirrored === this.mirrored && enabled === this.enabled) return;
-    this.mirrored = mirrored;
+  configure({ enabled = this.enabled }) {
+    enabled = Boolean(enabled);
+    if (enabled === this.enabled) return;
     this.enabled = enabled;
     this.reset();
   }
@@ -260,16 +259,18 @@ export class ProjectionMap {
       if (!this.handMatrix) this.revision++;
     }
   }
-  get calibrated() { return this.handMatrix !== null || (this.enabled && this.matrix !== null); }
+  get mirrored() { return this.enabled; }
+  get handCalibrated() { return this.enabled && this.handMatrix !== null; }
+  get calibrated() { return this.enabled && (this.handMatrix !== null || this.matrix !== null); }
   get status() {
+    if (!this.enabled) return 'Projector mode off';
     if (this.handMatrix) return 'Hand position calibrated';
-    if (!this.enabled) return 'Manual alignment';
     if (this.matrix && this.bordersPaused) return 'Screen alignment held';
     if (this.calibrated) return this.found === 4 && this.stable >= 3 ? 'Aligned to projection' : 'Corners obscured — holding alignment';
     return `Finding corners (${this.found}/4) — manual alignment`;
   }
   cameraPoint(x, y) {
-    const matrix = this.handMatrix || (this.enabled ? this.matrix : null);
+    const matrix = this.enabled ? this.handMatrix || this.matrix : null;
     return matrix ? transform(matrix, x, y) : null;
   }
   point(x, y, cameraX, cameraY) {

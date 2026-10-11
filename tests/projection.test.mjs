@@ -6,6 +6,25 @@ const { ProjectionMap, HandCalibration, HAND_TARGETS, homography, transform, MAR
 const packet = (timestamp, centers = MARKER_CENTERS) => ({ timestamp, markers: centers.map((center, id) => ({ id, center })) });
 const close = (actual, expected) => actual.forEach((v, i) => assert.ok(Math.abs(v - expected[i]) < 1e-8));
 
+test('projector mode alone controls fallback mirroring and swipes, with the original behavior by default', () => {
+  const map = new ProjectionMap();
+  assert.equal(map.enabled, false);
+  assert.equal(map.mirrored, false);
+  close(map.point(0.2, 0.4, 0.9, 0.8), [0.2, 0.4]);
+  assert.equal(map.swipe({ swipe: 1 }), 1);
+  map.configure({ enabled: true });
+  assert.equal(map.mirrored, true);
+  close(map.point(0.2, 0.4, 0.9, 0.8), [0.8, 0.4]);
+  assert.equal(map.swipe({ swipe: 1 }), -1);
+  map.configure({ mirrored: false });
+  assert.equal(map.mirrored, true, 'the removed independent mirror option cannot override the mode');
+  map.configure({ enabled: false });
+  close(map.point(0.2, 0.4), [0.2, 0.4]);
+  assert.equal(map.swipe({ swipe: 1 }), 1);
+  for (const t of [0, 500, 1000]) map.update(packet(t), t, t);
+  assert.equal(map.calibrated, false, 'marker observations are inactive outside projector mode');
+});
+
 test('four known correspondences undo an angled camera view and reflection', () => {
   const projection = [-0.65, 0.08, 0.85, 0.03, 0.68, 0.1, 0.12, 0.09];
   const camera = MARKER_CENTERS.map(p => transform(projection, ...p));
@@ -148,16 +167,22 @@ test('hand-depth mapping corrects increasing rightward scale error and ignores b
   assert.equal(map.swipe({ camera_swipe: [camera([0.2, 0.5]), camera([0.8, 0.5])] }), 1);
   map.reset();
   assert.equal(map.calibrated, true);
-  map.configure({ enabled: false, mirrored: false });
-  assert.equal(map.calibrated, true);
+  map.configure({ enabled: false });
+  assert.equal(map.calibrated, false);
+  assert.equal(map.cameraPoint(0.5, 0.5), null);
+  close(map.point(0.2, 0.4, ...camera([0.85, 0.5])), [0.2, 0.4]);
+  assert.equal(map.swipe({ swipe: -1, camera_swipe: [camera([0.2, 0.5]), camera([0.8, 0.5])] }), -1);
   assert.deepEqual(map.handCalibration, { source, target: HAND_TARGETS.slice(0, 4) });
+  map.configure({ enabled: true });
+  assert.equal(map.calibrated, true);
+  close(map.point(0.2, 0.4, ...camera([0.85, 0.5])), [0.85, 0.5]);
   map.reset({ clearHand: true });
   assert.equal(map.calibrated, false);
   assert.equal(map.handCalibration, null);
 });
 
 test('invalid replacement calibration preserves the previous mapping and clear restores manual mode', () => {
-  const map = new ProjectionMap();
+  const map = new ProjectionMap({ enabled: true });
   assert.equal(map.setHandCalibration(HAND_TARGETS.slice(0, 4)), true);
   assert.equal(map.setHandCalibration([[0, 0], [1, 1], [1, 0], [0, 1]]), false);
   assert.equal(map.calibrated, true);
