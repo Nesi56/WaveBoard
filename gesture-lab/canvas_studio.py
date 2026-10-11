@@ -65,7 +65,7 @@ HELP_ROWS = (
      ("PINKY PINCH", "laser or pen colour"), ("DROP ON BIN", "delete canvas")),
 )
 HELP_KEYS = ("Keys: arrows/clicker slides  N new  C content  Z undo  X clear  K laser/pen  "
-             "B background  V hands  S save  P pause  F fullscreen  H help  Q quit")
+             "B background  V hands  T timings  S save  P pause  F fullscreen  H help  Q quit")
 
 
 def now_ms():
@@ -305,6 +305,7 @@ class Renderer:
         self.background_mode = 0  # dimmed camera, full camera, plain
         self.show_help = True
         self.show_hands = True
+        self.show_timings = False
         w, h = size
         self.base = np.full((h, w, 3), BACKGROUND, np.uint8)
         step = max(40, w // 32)
@@ -474,12 +475,23 @@ class Renderer:
             text(out, HELP_KEYS, (22, h - 16), 0.4, MUTED)
         if status:
             chip(out, status, (22, bottom - 16), 0.5, (140, 170, 255))
+        if self.show_timings:
+            lines = [f"{name:<9}{ms:6.1f} ms" for name, ms in stats.get("timings", {}).items()]
+            lines.append(f"{'tracking':<9}{stats.get('tracking_ms', 0.0):6.1f} ms (own thread)")
+            for i, line in enumerate(lines):
+                chip(out, line, (w - 260, 96 + i * 26), 0.5, TEXT)
 
 
 # ---- input: camera + MediaPipe, mouse ----
 
 class HandTracker:
-    """Newest camera frame plus MediaPipe hands, using the same helpers as server.py."""
+    """Camera capture and MediaPipe hand tracking, each in its own thread.
+
+    Drawing never waits for tracking. On a Jetson's CPU, MediaPipe is slower
+    than the camera, so drawing once per tracking result would cap the whole
+    picture at the tracking rate. Instead the render loop draws every camera
+    frame (frame()) and applies each finished tracking result once (result()).
+    """
 
     def __init__(self, args):
         import mediapipe as mp
@@ -499,33 +511,108 @@ class HandTracker:
             self.stop.set()
             self.capture.close()
             raise
-        self.sequence, self.last_timestamp = 0, -1
-        self.meter = tracker.RateMeter()
-        self.capture_fps = self.tracking_fps = 0.0
-        self.last_frame = time.monotonic()
+        self.error = None
+        self.tracking_fps = 0.0
+        self.tracking_ms = 0.0
+        self._lock = threading.Lock()
+        self._result, self._result_id, self._taken_id = None, 0, 0
+        self._thread = threading.Thread(target=self._track, name="hand-tracking", daemon=True)
+        self._thread.start()
 
-    def next(self, timeout=0.03):
-        """Return (mirrored frame, detections, timestamp ms), or None when no new frame arrived."""
-        sample = self.capture.next_after(self.sequence, timeout=timeout)
-        if sample is None:
-            if time.monotonic() - self.last_frame > 5:
-                raise RuntimeError("No camera frames for five seconds. Check USB and the selected capture mode.")
-            return None
-        self.sequence, capture_time, frame, self.capture_fps = sample
-        self.last_frame = time.monotonic()
-        timestamp = int(capture_time * 1000)
-        if timestamp <= self.last_timestamp:
-            return None
-        self.last_timestamp = timestamp
-        frame = cv2.flip(frame, 1)
-        detections, _ = tracker.detect_hands(cv2, self.mp, np, self.landmarker, frame, timestamp, self.processing_width)
-        self.tracking_fps = self.meter.tick(time.monotonic())
-        return frame, detections, timestamp
+    def frame(self, after, timeout):
+        """The newest camera sample (sequence, capture time, frame, capture fps).
+
+        Waits up to timeout for one newer than `after`, then returns whatever is newest.
+        """
+        return self.capture.next_after(after, timeout=timeout) or self.capture.newest()
+
+    def result(self):
+        """Each finished tracking result once: (frame size, detections, timestamp ms), else None."""
+        with self._lock:
+            if self._result_id == self._taken_id:
+                return None
+            self._taken_id = self._result_id
+            return self._result
+
+    def _track(self):
+        sequence, last_timestamp, last_frame = 0, -1, time.monotonic()
+        meter = tracker.RateMeter()
+        try:
+            while not self.stop.is_set():
+                sample = self.capture.next_after(sequence, timeout=0.25)
+                if sample is None:
+                    if time.monotonic() - last_frame > 5:
+                        raise RuntimeError("No camera frames for five seconds. Check USB and the selected capture mode.")
+                    continue
+                sequence, capture_time, frame, _ = sample
+                last_frame = time.monotonic()
+                timestamp = int(capture_time * 1000)
+                if timestamp <= last_timestamp:
+                    continue
+                last_timestamp = timestamp
+                started = time.perf_counter()
+                # Shrink first, then mirror the small image: same landmarks, far less work.
+                height, width = frame.shape[:2]
+                inference_width = min(width, self.processing_width)
+                small = frame if inference_width == width else cv2.resize(
+                    frame, (inference_width, max(1, round(height * inference_width / width))), interpolation=cv2.INTER_AREA)
+                detections, _ = tracker.detect_hands(cv2, self.mp, np, self.landmarker, cv2.flip(small, 1),
+                                                     timestamp, inference_width)
+                self.tracking_ms = (time.perf_counter() - started) * 1000
+                with self._lock:
+                    self._result = ((width, height), detections, timestamp)
+                    self._result_id += 1
+                self.tracking_fps = meter.tick(time.monotonic())
+        except Exception as exc:
+            self.error = f"{type(exc).__name__}: {exc}"
 
     def close(self):
         self.stop.set()
+        self._thread.join(timeout=2.0)
         self.capture.close()
-        self.landmarker.close()
+        if not self._thread.is_alive():
+            # Never close the landmarker while a detection may still be running.
+            self.landmarker.close()
+
+
+FRAME_PERIOD = 1 / 30
+
+
+class StageTimer:
+    """Average milliseconds per stage of a frame, for the T panel and the summary at exit."""
+
+    def __init__(self):
+        self.mean, self.total, self.count = {}, {}, {}
+
+    def add(self, name, started):
+        ms = (time.perf_counter() - started) * 1000
+        self.mean[name] = ms if name not in self.mean else 0.9 * self.mean[name] + 0.1 * ms
+        self.total[name] = self.total.get(name, 0.0) + ms
+        self.count[name] = self.count.get(name, 0) + 1
+
+    def summary(self):
+        if not self.count:
+            return "No frames were drawn."
+        parts = [f"{name} {self.total[name] / self.count[name]:.1f}" for name in self.total]
+        return "Average ms per frame: " + ", ".join(parts)
+
+
+def matching_map(screen_map, frame_size, size, margin):
+    if screen_map is None or screen_map.camera_size != frame_size:
+        screen_map = ScreenMap(frame_size, size, margin)
+    return screen_map
+
+
+def camera_to_screen(frame, screen_map, size):
+    """Crop, scale and mirror a camera frame for the background and lenses.
+
+    Cropping the matching columns of the unmirrored frame and mirroring the
+    scaled result equals cropping the mirrored frame, without flipping the
+    full-size image every frame.
+    """
+    x, y, w, h = screen_map.crop
+    mirrored_x = frame.shape[1] - x - w
+    return cv2.flip(cv2.resize(frame[y:y + h, mirrored_x:mirrored_x + w], size, interpolation=cv2.INTER_LINEAR), 1)
 
 
 class HandReader:
@@ -660,6 +747,8 @@ def handle_key(key, studio, renderer, last_image):
         studio.notify(("Dimmed camera", "Camera", "Plain")[renderer.background_mode] + " background")
     elif char == "v":
         renderer.show_hands = not renderer.show_hands
+    elif char == "t":
+        renderer.show_timings = not renderer.show_timings
     elif char == "p":
         studio.paused = not studio.paused
         studio.notify("Gestures paused" if studio.paused else "Gestures on")
@@ -750,35 +839,52 @@ def main(argv=None):
     print("WaveBoard Canvas Studio running. Press H for help, Q or Esc to quit.", flush=True)
 
     camera_view, screen_map, hands, image = None, None, [], None
+    frame_sequence, capture_fps = 0, 0.0
     overlay = studio.update([], now_ms())
-    render_meter = tracker.RateMeter()
+    render_meter, timer = tracker.RateMeter(), StageTimer()
+    presented = time.perf_counter()
     try:
         while True:
+            if hand_tracker and hand_tracker.error:
+                status = f"Hand tracking stopped ({hand_tracker.error}). Mouse and keyboard still work."
+                hand_tracker.close()
+                hand_tracker, camera_view, hands = None, None, []
             if hand_tracker:
+                # Draw each new camera frame at once; without one, still draw ~30 times a second.
                 try:
-                    result = hand_tracker.next()
+                    sample = hand_tracker.frame(frame_sequence, max(0.0, presented + FRAME_PERIOD - time.perf_counter()))
                 except RuntimeError as exc:
                     hand_tracker.close()
-                    hand_tracker, camera_view, hands = None, None, []
+                    hand_tracker, camera_view, hands, sample = None, None, [], None
                     status = f"{exc} Mouse and keyboard still work."
-                    result = None
+                started = time.perf_counter()
+                if sample and sample[0] != frame_sequence:
+                    frame_sequence, _, frame, capture_fps = sample
+                    screen_map = matching_map(screen_map, (frame.shape[1], frame.shape[0]), size, args.reach)
+                    camera_view = camera_to_screen(frame, screen_map, size)
+                timer.add("camera", started)
+                started = time.perf_counter()
+                result = hand_tracker.result() if hand_tracker else None
                 if result:
-                    frame, detections, timestamp = result
-                    frame_size = (frame.shape[1], frame.shape[0])
-                    if screen_map is None or screen_map.camera_size != frame_size:
-                        screen_map = ScreenMap(frame_size, size, args.reach)
-                    x, y, cw, ch = screen_map.crop
-                    camera_view = cv2.resize(frame[y:y + ch, x:x + cw], size, interpolation=cv2.INTER_LINEAR)
+                    frame_size, detections, timestamp = result
+                    screen_map = matching_map(screen_map, frame_size, size, args.reach)
                     hands = reader.read(detections, timestamp, frame_size, screen_map)
                     overlay = studio.update(hands, timestamp)
+                timer.add("gestures", started)
             else:
                 overlay = studio.update([], now_ms())
-            stats = {"capture": hand_tracker.capture_fps if hand_tracker else 0.0,
+            started = time.perf_counter()
+            stats = {"capture": capture_fps if hand_tracker else 0.0,
                      "tracking": hand_tracker.tracking_fps if hand_tracker else 0.0,
-                     "render": render_meter.tick(time.monotonic())}
+                     "tracking_ms": hand_tracker.tracking_ms if hand_tracker else 0.0,
+                     "render": render_meter.tick(time.monotonic()), "timings": timer.mean}
             image = renderer.compose(studio, overlay, camera_view, hands, now_ms(), stats, mouse, status)
+            timer.add("draw", started)
+            started = time.perf_counter()
             cv2.imshow(WINDOW, image)
             key = cv2.waitKeyEx(1 if hand_tracker else 15)
+            presented = time.perf_counter()
+            timer.add("display", started)
             studio.tick(now_ms())
             if key != -1 and not handle_key(key, studio, renderer, image):
                 break
@@ -790,6 +896,7 @@ def main(argv=None):
         if hand_tracker:
             hand_tracker.close()
         cv2.destroyAllWindows()
+        print(timer.summary(), flush=True)
 
 
 if __name__ == "__main__":

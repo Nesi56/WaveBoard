@@ -105,6 +105,13 @@ class LatestFrameCapture:
                 return self.latest
             return None
 
+    def newest(self):
+        """The latest sample without waiting, or None before the first frame arrives."""
+        with self.condition:
+            if self.failure:
+                raise RuntimeError(self.failure)
+            return self.latest
+
     def close(self):
         self.done.set()
         self.thread.join(timeout=2.0)

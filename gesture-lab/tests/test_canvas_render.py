@@ -69,6 +69,25 @@ class RenderTests(unittest.TestCase):
         self.assertFalse(self.studio.paused)
         self.assertEqual(canvas.content, "board")
 
+    def test_camera_background_matches_mirroring_the_whole_frame(self):
+        import cv2
+        from canvas_gestures import ScreenMap
+        rng = np.random.default_rng(1)
+        frame = rng.integers(0, 255, (720, 1280, 3), dtype=np.uint8)
+        screen_map = ScreenMap((1280, 720), self.size, 0.12)
+        x, y, w, h = screen_map.crop
+        expected = cv2.resize(cv2.flip(frame, 1)[y:y + h, x:x + w], self.size, interpolation=cv2.INTER_LINEAR)
+        actual = canvas_studio.camera_to_screen(frame, screen_map, self.size)
+        self.assertEqual(actual.shape, expected.shape)
+        self.assertLess(np.abs(actual.astype(int) - expected.astype(int)).mean(), 2)
+
+    def test_stage_timer_reports_averages(self):
+        import time
+        timer = canvas_studio.StageTimer()
+        timer.add("draw", time.perf_counter())
+        self.assertIn("draw", timer.mean)
+        self.assertIn("Average ms per frame: draw", timer.summary())
+
     def test_slide_folder_uses_natural_order(self):
         import tempfile
         from pathlib import Path
