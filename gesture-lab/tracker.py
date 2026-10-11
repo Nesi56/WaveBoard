@@ -258,9 +258,20 @@ def run(stop_event, publish, args):
 
 if __name__ == "__main__":
     import json
+    import signal
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    next_report = [time.monotonic() + 10]
+    def publish(packet):
+        print(json.dumps(packet, allow_nan=False), flush=True)
+        if packet.get("type") == "status":
+            print(packet.get("message", ""), file=sys.stderr, flush=True)
+        elif time.monotonic() >= next_report[0]:
+            next_report[0] = time.monotonic() + 10
+            print(f"Tracking {packet['tracking_fps']:.1f} FPS, camera {packet['capture_fps']:.1f} FPS", file=sys.stderr, flush=True)
     parser = argparse.ArgumentParser(description="WaveBoard hand tracker (JSON lines on stdout)")
     register_arguments(parser)
     try:
-        run(threading.Event(), lambda packet: print(json.dumps(packet), flush=True), parser.parse_args())
+        run(stop, publish, parser.parse_args())
     except KeyboardInterrupt:
         pass

@@ -1,6 +1,6 @@
 // Hand control for the WaveBoard workspace.
 //
-// Connects to the hand tracker in gesture-lab/ (python gesture-lab/server.py),
+// Receives hand packets from the desktop Qt bridge (legacy browser mode uses a WebSocket),
 // draws every tracked hand as a skeleton over the workspace (the camera image is
 // never shown), and turns the primary hand into window.WaveBoardInput events:
 // a thumb + index pinch presses, drags and releases like a finger on a touch
@@ -34,9 +34,9 @@ style.textContent = `
   position: fixed; left: 0; top: 0; width: 38px; height: 38px; margin: -19px 0 0 -19px;
   border: 4px solid var(--deep, ${DEEP}); border-radius: 50%;
   background: rgb(255 255 255 / 0.35); box-shadow: 0 0 0 3px rgb(255 255 255 / 0.85);
-  transition: scale 0.08s, background 0.08s;
+  transition: background 0.08s;
 }
-.hand-cursor[data-down="true"] { scale: 0.75; background: var(--deep, ${DEEP}); }`;
+.hand-cursor[data-down="true"] { background: var(--deep, ${DEEP}); }`;
 document.head.append(style);
 const layer = document.createElement("div");
 layer.className = "hand-layer";
@@ -126,8 +126,8 @@ function apply(pointer) {
     y: Math.min(Math.max(pointer.y * window.innerHeight, 0), window.innerHeight - 1),
   };
   cursor.hidden = false;
-  // The translate property (not transform) so the pressed-state scale cannot scale the position.
-  cursor.style.translate = `${last.x}px ${last.y}px`;
+  // A combined transform also works in JetPack's older Qt WebEngine.
+  cursor.style.transform = `translate(${last.x}px, ${last.y}px) scale(${pointer.down ? 0.75 : 1})`;
   cursor.dataset.down = String(pointer.down);
   if (!pointer.down) {
     release("up");
@@ -269,4 +269,19 @@ setInterval(() => {
 }, 200);
 document.addEventListener("visibilitychange", () => document.hidden && hide());
 window.addEventListener("resize", paintSoon);
-connect();
+if (window.WaveBoardDesktop) {
+  window.WaveBoardNative.then(bridge => {
+    bridge.hands.connect(encoded => {
+      let data;
+      try { data = JSON.parse(encoded); } catch { return; }
+      if (data?.type === "frame" && validPointer(data.pointer)) apply(data.pointer);
+      else if (data?.type === "status" && data.level === "error") {
+        hide();
+        window.dispatchEvent(new CustomEvent("waveboard-tracker-error", { detail: data.message }));
+      }
+    });
+    bridge.startHands();
+  }).catch(() => hide());
+} else {
+  connect();
+}

@@ -7,9 +7,7 @@
     <title>WaveBoard</title>
     <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./styles.css" />
-    <script type="importmap">
-      { "imports": { "three": "./vendor/three.module.js" } }
-    </script>
+    <script src="./desktop.js"></script>
     <script>
       // If the workspace script cannot start (old browser, blocked or failed
       // module), say so instead of showing a page that ignores every click.
@@ -21,10 +19,9 @@
         if (window.WaveBoardInput) return;
         var note = document.createElement("p");
         note.setAttribute("role", "alert");
-        note.textContent = "WaveBoard could not start in this browser" +
+        note.textContent = "WaveBoard could not start" +
           (waveboardStartError ? " (" + waveboardStartError + ")" : "") +
-          ". Use a current Chrome, Edge, Chromium or Firefox, open http://localhost:8765 " +
-          "after starting python -m waveboard, and reload.";
+          ". Close the window and reopen WaveBoard. If this continues, check the desktop runtime installation.";
         note.style.cssText = "position:fixed;left:16px;right:16px;bottom:16px;margin:0;padding:14px 18px;" +
           "border-radius:14px;background:#304b3b;color:#fffefa;font:16px/1.4 Arial,sans-serif;z-index:2147483647";
         document.body.appendChild(note);

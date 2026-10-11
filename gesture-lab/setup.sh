@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prepares hand tracking: a Python environment with MediaPipe, OpenCV and websockets,
+# Prepares hand tracking: a Python environment with MediaPipe and OpenCV,
 # and the hand model. Uses the active virtual environment, otherwise ~/vision-env,
 # which it creates when missing. scripts/start-ubuntu.sh --hands runs ~/vision-env.
 set -euo pipefail
@@ -24,14 +24,13 @@ if ! "$python" -c 'import cv2, mediapipe, numpy; from mediapipe.tasks.python imp
   "$python" -m pip install mediapipe
   "$python" -c 'import cv2, mediapipe, numpy; from mediapipe.tasks.python import vision'
 fi
-"$python" -m pip install 'websockets>=14,<18'
 "$python" download_model.py
 "$python" -m pip freeze > environment-working.txt
 tracker_python="$("$python" -c 'import sys; print(sys.executable)')"
 echo
 echo 'Setup complete. From the WaveBoard folder start everything with:'
 if [ "$tracker_python" = "$HOME/vision-env/bin/python" ]; then
-  echo '  bash scripts/start-ubuntu.sh --hands'
+  echo '  bash scripts/start-ubuntu.sh'
 else
-  echo "  WAVEBOARD_HANDS_PYTHON=$tracker_python bash scripts/start-ubuntu.sh --hands"
+  echo "  WAVEBOARD_HANDS_PYTHON=$tracker_python bash scripts/start-ubuntu.sh"
 fi

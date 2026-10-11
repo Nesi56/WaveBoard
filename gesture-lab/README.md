@@ -1,13 +1,13 @@
 # WaveBoard hand tracking
 
 The camera half of WaveBoard. MediaPipe tracks up to two hands from the webcam on
-the Jetson Orin Nano. The WaveBoard workspace (the browser interface at the
+the Jetson Orin Nano. The WaveBoard workspace (the local desktop interface at the
 repository root) then draws them as skeletons and takes your pinches as touches.
 The camera image never leaves this process, and nothing is recorded or uploaded:
 only hand positions go to the local page.
 
 ```text
-webcam -> tracker.py (MediaPipe, CPU) -> server.py (ws://localhost:8766) -> web/hands.js in the workspace
+webcam -> tracker.py (MediaPipe, CPU) -> process pipe -> Qt bridge -> web/hands.js
 ```
 
 ## Set up on the Jetson
@@ -20,23 +20,22 @@ bash gesture-lab/setup.sh
 Setup uses the active virtual environment, or `~/vision-env`, which it creates when missing
 (`sudo apt install python3-venv python3-pip` first). It installs MediaPipe, which brings
 OpenCV and NumPy, unless the environment already runs them, in which case it keeps your
-versions. It adds the `websockets` package, and copies your hand-drawing app's
+versions. It copies your hand-drawing app's
 `hand_landmarker.task` or downloads Google's. The launcher runs `~/vision-env/bin/python`;
-for another environment, setup prints the `WAVEBOARD_HANDS_PYTHON=...` to use. For Windows
-and macOS, see [Try it on another computer](../README.md#try-it-on-another-computer).
+for another environment, setup prints the `WAVEBOARD_HANDS_PYTHON=...` to use. See [desktop setup](../README.md#install-once-on-the-jetson) for the Qt runtime.
 
 ## Run
 
 From the repository root, start the workspace and hand tracking together:
 
 ```bash
-bash scripts/start-ubuntu.sh --hands            # Chromium kiosk
-bash scripts/start-ubuntu.sh --hands --firefox  # Firefox kiosk
+bash scripts/start-ubuntu.sh
 ```
 
-Or run the two halves yourself: `python3 -m waveboard` in one terminal,
-`python gesture-lab/server.py` (in `vision-env`) in another, then open
-http://localhost:8765. Only one program can use the camera at a time.
+After installation, open WaveBoard from Applications. The desktop app runs
+`tracker.py` automatically and receives its hand packets through a process pipe.
+It does not start a WebSocket service. Closing the window stops the camera worker.
+Only one program can use the camera at a time.
 
 | Gesture | Effect in the workspace |
 | --- | --- |
@@ -70,10 +69,10 @@ http://localhost:8765. Only one program can use the camera at a time.
   `sudo jetson_clocks`.
 
 With the launcher, pass tracker options through `WAVEBOARD_HANDS_ARGS` and read the log in
-`~/.cache/waveboard/hands.log`:
+`/tmp/waveboard-hands.log`:
 
 ```bash
-WAVEBOARD_HANDS_ARGS="--camera /dev/video2 --detection-confidence 0.35" bash scripts/start-ubuntu.sh --hands
+WAVEBOARD_HANDS_ARGS="--camera /dev/video2 --detection-confidence 0.35" bash scripts/start-ubuntu.sh
 ```
 
 ## Options
@@ -86,14 +85,12 @@ WAVEBOARD_HANDS_ARGS="--camera /dev/video2 --detection-confidence 0.35" bash scr
 | `--processing-width` | full frame | Shrink frames to this width before MediaPipe |
 | `--detection-confidence` | 0.5 | Hand detection threshold |
 | `--reach` | 0.12 | Camera edge band mapped beyond the screen edges |
-| `--allow-origin` | | Another workspace page origin, e.g. `http://localhost:8770` |
 
 Find the camera with `v4l2-ctl --list-devices` (`sudo apt install v4l-utils`).
 
 ## Troubleshooting
 
-- **No skeleton appears:** check `~/.cache/waveboard/hands.log` (or the terminal running
-  `server.py`). It names the camera mode, reports errors, and prints the tracking rate.
+- **No skeleton appears:** check `/tmp/waveboard-hands.log` (or stderr when running `tracker.py` yourself). It names the camera mode, reports errors, and prints the tracking rate.
 - **Camera cannot open:** close other camera apps, find the device with
   `v4l2-ctl --list-devices`, and pass `--camera /dev/videoN`.
 - **Model absent or MediaPipe import fails:** run `bash gesture-lab/setup.sh` again; it reports
@@ -108,7 +105,7 @@ Find the camera with `v4l2-ctl --list-devices` (`sudo apt install v4l-utils`).
 - `tracker.py`: camera capture, MediaPipe settings, and the frames sent to the workspace.
 - `gestures.py`: finger extension, pinch detection with hysteresis, and stable hand ids.
 - `hand_pointer.py`: screen mapping, smoothing, the touch pointer, swipes, and skeleton points.
-- `server.py`: the local WebSocket stream on port 8766.
+- `server.py`: legacy WebSocket adapter, unused by the desktop app.
 - `tests/fixtures/mediapipe_sample_hands.json`: real MediaPipe landmarks used in tests.
 
 ```bash
