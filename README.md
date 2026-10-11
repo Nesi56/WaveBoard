@@ -12,11 +12,10 @@ The repository has two parts that work together:
   around a 480p projector: large controls, short labels, and one task on screen
   at a time. Python serves the machine's files and presentation conversions; a
   local browser displays the menu and utilities.
-- **Hand tracking** (`gesture-lab/`): MediaPipe tracks two hands from the webcam.
-  It drives the workspace (pinch to tap and drag, swipe to change slides), and
-  it also powers two standalone apps: **Canvas Studio**, where you frame and
-  stretch canvases with both hands, and a gesture-controlled 3D viewer. See
-  [gesture-lab/README.md](gesture-lab/README.md).
+- **Hand tracking** (`gesture-lab/`): MediaPipe tracks two hands from the webcam
+  and the workspace draws them as skeletons over whatever is on screen. Pinch to
+  tap and drag, swipe an open palm to change cards and slides. The camera image is
+  never shown. See [gesture-lab/README.md](gesture-lab/README.md).
 
 ## Quick start on the Jetson
 
@@ -31,17 +30,17 @@ bash scripts/start-ubuntu.sh --hands
 
 The launcher opens the workspace in a Chromium kiosk window and starts hand
 tracking alongside it. Add `--firefox` to use Firefox instead (see
-[Using Firefox](#using-firefox)). Leave out `--hands` for mouse and touch only. To make
-canvases with your hands instead, run `python canvas_studio.py` in
-`gesture-lab/` (one app at a time can use the camera).
+[Using Firefox](#using-firefox)). Leave out `--hands` for mouse and touch only.
 
 ## Controlling the workspace with your hands
 
-Stand facing the camera with your hand in view; a round cursor follows it.
+Stand facing the camera with your hands in view. Each hand appears as a skeleton
+over the workspace, in its green-on-paper colours (a second hand is drawn lighter),
+and a round cursor sits between the thumb and index fingertips of the main hand.
 
 | Gesture | Works like |
 | --- | --- |
-| Hand in view | Moves the cursor (it sits between your thumb and index fingertips) |
+| Hand in view | Skeleton on screen; moves the cursor |
 | Quick thumb + index pinch | A tap: open a card, press a button, pick a colour |
 | Pinch, move, release | Touch and drag: draw on the board, orbit a 3D model |
 | Open palm swiped left / right | Arrow keys: next / previous Home card or slide |
@@ -49,13 +48,14 @@ Stand facing the camera with your hand in view; a round cursor follows it.
 Small wobbles during a pinch are ignored so that taps land where you aimed;
 move further and the pinch becomes a drag. The tracker ignores a band around
 the camera's edges (`--reach`, default 12%) so the cursor can reach the screen
-edges without your hand leaving the camera's view.
+edges without your hand leaving the camera's view. For the most accurate tracking
+(camera placement, light, standing farther back) see
+[gesture-lab/README.md](gesture-lab/README.md#getting-the-most-accurate-tracking).
 
 To run the two halves by hand instead of with the launcher, start
 `python3 -m waveboard` in one terminal and `python gesture-lab/server.py` (in
 `vision-env`) in another, then open http://127.0.0.1:8765. Ports: the workspace
-uses **8765**, the hand-tracking stream **8766**, and gesture-lab's own 3D viewer
-**8000**, all on loopback only. If you move the workspace to another port, start the
+uses **8765** and the hand-tracking stream **8766**, both on loopback only. If you move the workspace to another port, start the
 tracker with `--allow-origin http://127.0.0.1:PORT` (the launcher does this for you).
 
 Hand input reaches the page as synthetic pointer events, which browsers do not
@@ -242,11 +242,13 @@ python -m unittest discover -s tests -v
 cd gesture-lab && python -m unittest discover -s tests -v
 ```
 
-Hand control of the workspace was checked end to end in headless Chromium:
-synthetic hands went through the real tracker bridge and `web/hands.js` into this
-interface. A pinch-tap changed Home cards and opened the board, a pinch-drag drew a
-stroke, open-palm swipes changed cards and slides, and the cursor hid when the hand
-left. The kiosk launcher with `--hands` was run with a stand-in browser: it started
+Hand control of the workspace was checked end to end in headless Chromium and
+Firefox 136: synthetic hands went through the real tracker bridge and `web/hands.js`
+into this interface. A pinch-tap changed Home cards and opened the board, a pinch-drag
+drew a stroke, open-palm swipes changed cards and slides, and the cursor hid when the
+hand left. Separately, a recorded photo of two hands went through the real tracker
+(MediaPipe) to the workspace, which drew both skeletons on Home, the whiteboard and
+slides. The kiosk launcher with `--hands` was run with a stand-in browser: it started
 both servers, the bridge accepted the page and refused another origin, and both
 servers stopped afterwards. Live camera tracking still needs testing on the Jetson.
 
@@ -259,7 +261,7 @@ waveboard/server.py       Local HTTP server, file access, video ranges, slide co
 waveboard/__main__.py     python -m waveboard entry point
 web/index.html           Application shell
 web/app.js               Navigation, utilities, and input integration
-web/hands.js             Hand-tracking cursor: tracker pointer -> WaveBoardInput
+web/hands.js             Hand skeletons and cursor: tracker pointer -> WaveBoardInput
 web/styles.css           480p projector layout and large touch controls
 web/projector.js         Home carousel and minimal drawing workspace
 web/whiteboard.js         Drawing, history, persistence, and PNG export
@@ -267,5 +269,5 @@ web/viewer3d.js           Local 3D viewer
 web/vendor/              Offline Three.js modules and license notices
 web/assets/demo/         Bundled examples
 scripts/start-ubuntu.sh  Local-server and Chromium kiosk launcher (--hands adds tracking)
-gesture-lab/             Hand tracking, Canvas Studio, and the gesture 3D viewer
+gesture-lab/             Hand tracking: camera, MediaPipe, pointer, skeletons
 ```

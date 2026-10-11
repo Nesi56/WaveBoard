@@ -1,21 +1,21 @@
-"""Local-only HTTP viewer and latest-state WebSocket bridge for Gesture Lab."""
+"""Hand-tracking stream for the WaveBoard workspace: camera -> MediaPipe -> local WebSocket.
+
+Start it next to ``python -m waveboard`` (or let ``scripts/start-ubuntu.sh --hands``
+start both). web/hands.js connects to ws://127.0.0.1:8766, draws the hand skeletons
+and turns the pointer into touch input.
+"""
 import argparse
 import asyncio
-import functools
 import json
 import signal
 import threading
 import time
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
 from websockets.asyncio.server import serve
 
-ROOT = Path(__file__).resolve().parent
-VIEWER_PORT = 8000
-# The WaveBoard workspace (python -m waveboard) serves on 8765, so the bridge uses 8766.
+# The WaveBoard workspace (python -m waveboard) serves on 8765, so the stream uses 8766.
 BRIDGE_PORT = 8766
-ALLOWED_ORIGINS = [f"http://{host}:{port}" for port in (VIEWER_PORT, 8765) for host in ("127.0.0.1", "localhost")]
+ALLOWED_ORIGINS = [f"http://{host}:8765" for host in ("127.0.0.1", "localhost")]
 
 
 class LatestState:
@@ -45,22 +45,6 @@ class LatestState:
             return self.version, self.status, frame
 
 
-class ViewerHandler(SimpleHTTPRequestHandler):
-    def end_headers(self):
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Cache-Control", "no-cache")
-        super().end_headers()
-
-    def list_directory(self, path):
-        self.send_error(404)
-        return None
-
-    def log_message(self, fmt, *args):
-        if args and str(args[1] if len(args) > 1 else "") not in ("200", "304"):
-            super().log_message(fmt, *args)
-
-
 async def bridge(state, stop, origins=ALLOWED_ORIGINS):
     async def stream(connection):
         last_version = -1
@@ -83,9 +67,9 @@ async def bridge(state, stop, origins=ALLOWED_ORIGINS):
         except Exception as exc:
             from websockets.exceptions import ConnectionClosed
             if not isinstance(exc, ConnectionClosed):
-                print("Viewer connection ended:", exc)
+                print("Workspace connection ended:", exc)
 
-    # No LAN exposure. Only the locally served UIs can read camera landmarks.
+    # No LAN exposure. Only the local workspace page can read hand positions.
     async with serve(handler, "127.0.0.1", BRIDGE_PORT, origins=origins,
                      max_size=1024, max_queue=1, compression=None):
         while not stop.is_set():
@@ -94,44 +78,45 @@ async def bridge(state, stop, origins=ALLOWED_ORIGINS):
 
 def main():
     import tracker
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     tracker.register_arguments(parser)
-    parser.add_argument("--no-camera", action="store_true", help="Test viewer with mouse controls only")
     parser.add_argument("--allow-origin", action="append", default=[], metavar="URL",
                         help="also stream hands to this page origin, e.g. http://127.0.0.1:8770 for "
                              "a WaveBoard workspace on another port; may be repeated")
     args = parser.parse_args()
     state = LatestState()
     stop = threading.Event()
-    handler = functools.partial(ViewerHandler, directory=str(ROOT / "web"))
-    http = ThreadingHTTPServer(("127.0.0.1", VIEWER_PORT), handler)
-    threading.Thread(target=http.serve_forever, daemon=True).start()
+    next_report = [time.monotonic() + 10]
+
+    def publish(packet):
+        # A line every 10 s in the log (hands.log under the launcher) for checking speed on the Jetson.
+        now = time.monotonic()
+        if packet.get("type") == "frame" and now >= next_report[0]:
+            next_report[0] = now + 10
+            print(f"Tracking {packet['tracking_fps']:.1f} FPS, camera {packet['capture_fps']:.1f} FPS, "
+                  f"{len(packet['pointer']['hands'])} hand(s) in view", flush=True)
+        elif packet.get("type") == "status":
+            print(packet.get("message", ""), flush=True)
+        state.publish(packet)
 
     def tracking_worker():
         try:
-            tracker.run(stop, state.publish, args)
+            tracker.run(stop, publish, args)
         except Exception as exc:
             message = f"Hand tracker stopped: {exc}"
             print(message, flush=True)
             state.publish({"type": "status", "level": "error", "message": message})
 
-    if args.no_camera:
-        state.publish({"type": "status", "level": "info", "code": "demo",
-                       "message": "Mouse demo — camera tracking is off. Restart without --no-camera to use hands."})
-    else:
-        threading.Thread(target=tracking_worker, daemon=True).start()
+    threading.Thread(target=tracking_worker, daemon=True).start()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    print(f"3D viewer: open http://127.0.0.1:{VIEWER_PORT} in the browser on this Jetson.", flush=True)
-    print("Hand control for the WaveBoard workspace (python -m waveboard) is on as well.", flush=True)
-    print("Press Ctrl+C here to stop.", flush=True)
+    print(f"Hand tracking for the WaveBoard workspace on ws://127.0.0.1:{BRIDGE_PORT}.", flush=True)
+    print("Open the workspace (python3 -m waveboard, http://127.0.0.1:8765). Press Ctrl+C here to stop.", flush=True)
     try:
         asyncio.run(bridge(state, stop, ALLOWED_ORIGINS + [o.rstrip("/") for o in args.allow_origin]))
     except KeyboardInterrupt:
         pass
     finally:
         stop.set()
-        http.shutdown()
-        http.server_close()
 
 
 if __name__ == "__main__":

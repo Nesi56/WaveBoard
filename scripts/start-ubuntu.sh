@@ -17,7 +17,8 @@ usage() {
   printf 'Usage: bash scripts/start-ubuntu.sh [--hands] [--firefox] [--root /path/to/files]...\n'
   printf 'Set WAVEBOARD_PORT to change the default local port (8765).\n'
   printf -- '--hands also starts camera hand control (gesture-lab/server.py) with\n'
-  printf 'WAVEBOARD_HANDS_PYTHON, default ~/vision-env/bin/python.\n'
+  printf 'WAVEBOARD_HANDS_PYTHON, default ~/vision-env/bin/python. Pass tracker options in\n'
+  printf 'WAVEBOARD_HANDS_ARGS, e.g. "--camera /dev/video2 --detection-confidence 0.35".\n'
   printf -- '--firefox uses Firefox instead of Chromium. WAVEBOARD_BROWSER=/path/to/browser\n'
   printf 'picks a specific Chromium-family or Firefox binary.\n'
 }
@@ -223,8 +224,10 @@ if ((waveboard_hands)); then
   if [[ ! -x "$waveboard_hands_python" ]]; then
     waveboard_hands_python="$(command -v python3)"
   fi
+  read -r -a waveboard_hands_args <<<"${WAVEBOARD_HANDS_ARGS:-}"
   # Loopback only; --allow-origin lets a page on a WAVEBOARD_PORT other than 8765 connect.
-  "$waveboard_hands_python" gesture-lab/server.py --allow-origin "$waveboard_url" >"$waveboard_cache_dir/hands.log" 2>&1 &
+  "$waveboard_hands_python" gesture-lab/server.py --allow-origin "$waveboard_url" "${waveboard_hands_args[@]}" \
+    >"$waveboard_cache_dir/hands.log" 2>&1 &
   waveboard_hands_pid=$!
   printf 'Hand control is starting. If no cursor appears, check %s/hands.log\n' "$waveboard_cache_dir"
 fi

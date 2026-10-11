@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 import unittest
 
-from gestures import FINGERS, TIPS, GestureEngine, HandIdentities, PinchState, finger_states, pinch_ratios
+from gestures import FINGERS, TIPS, HandEngine, HandIdentities, PinchState, finger_states, pinch_ratios
 
 
 def open_points():
@@ -15,14 +15,6 @@ def open_points():
         for offset in range(4):
             points[start + offset] = [x, 1 + offset * 0.5, 0]
     return points
-
-
-def fake_hand(identity="left-1", pinch=None, opened=True, x=0.3):
-    points = [[x, 0.5, 0.0] for _ in range(21)]
-    return {"id": identity, "landmarks": points,
-            "fingers": {name: opened for name in FINGERS},
-            "pinches": {name: name == pinch for name in TIPS},
-            "palm": [x, 0.5], "roll": 0.25}
 
 
 class FingerGeometryTests(unittest.TestCase):
@@ -117,101 +109,29 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(first.identity, again.identity)
 
 
-class GestureTests(unittest.TestCase):
-    def test_held_discrete_gesture_has_one_event(self):
-        engine = GestureEngine()
-        hand = fake_hand(pinch="ring")
-        self.assertEqual(engine.update_pose([hand], 0)["mode"], "hover")
-        self.assertEqual(engine.update_pose([hand], 299)["mode"], "hover")
-        triggered = engine.update_pose([hand], 300)
-        self.assertEqual(triggered["mode"], "next_part")
-        self.assertEqual(engine.update_pose([hand], 3000)["event_id"], triggered["event_id"])
-        engine.update_pose([fake_hand()], 3100)
-        engine.update_pose([hand], 3200)
-        repeated = engine.update_pose([hand], 3500)
-        self.assertEqual(repeated["mode"], "next_part")
-        self.assertGreater(repeated["event_id"], triggered["event_id"])
-
-    def test_reset_requires_full_hold(self):
-        engine = GestureEngine()
-        hand = fake_hand(pinch="pinky")
-        engine.update_pose([hand], 0)
-        self.assertEqual(engine.update_pose([hand], 699)["mode"], "hover")
-        self.assertEqual(engine.update_pose([hand], 700)["mode"], "reset")
-
-    def test_two_index_pinches_take_priority_over_grab(self):
-        engine = GestureEngine()
-        hands = [fake_hand("left-1", "index", x=0.2), fake_hand("right-2", "index", x=0.8)]
-        engine.update_pose(hands, 0)
-        result = engine.update_pose(hands, 100, aspect_ratio=2)
-        self.assertEqual(result["mode"], "zoom")
-        self.assertAlmostEqual(result["distance"], 1.2)
-        self.assertEqual(result["cursor"], [0.5, 0.5])
-
-    def test_mismatched_two_hand_pinches_do_not_trigger_discrete_action(self):
-        engine = GestureEngine()
-        hands = [fake_hand("left-1", "index"), fake_hand("right-2", "pinky")]
-        engine.update_pose(hands, 0)
-        self.assertEqual(engine.update_pose(hands, 2000)["mode"], "hover")
-
-    def test_two_open_palms_explode_but_one_open_palm_does_not(self):
-        engine = GestureEngine()
-        hands = [fake_hand("left-1"), fake_hand("right-2")]
-        engine.update_pose(hands, 0)
-        self.assertEqual(engine.update_pose(hands, 100)["mode"], "explode")
-        self.assertEqual(engine.update_pose(hands[:1], 110)["mode"], "hover")
-
-    def test_two_to_one_hand_requires_fresh_baseline_event(self):
-        engine = GestureEngine()
-        hands = [fake_hand("left-1", "index"), fake_hand("right-2", "index")]
-        engine.update_pose(hands, 0)
-        zoom = engine.update_pose(hands, 100)
-        pending = engine.update_pose(hands[:1], 120)
-        self.assertEqual(pending["mode"], "hover")
-        grab = engine.update_pose(hands[:1], 220)
-        self.assertEqual(grab["mode"], "grab")
-        self.assertNotEqual(grab["event_id"], zoom["event_id"])
-
-    def test_lost_hands_immediately_idle_and_cancel_pending_hold(self):
-        engine = GestureEngine()
-        hand = fake_hand(pinch="pinky")
-        engine.update_pose([hand], 0)
-        lost = engine.update_pose([], 600)
-        self.assertEqual(lost["mode"], "idle")
-        self.assertIsNone(lost["cursor"])
-        engine.update_pose([hand], 650)
-        self.assertEqual(engine.update_pose([hand], 800)["mode"], "hover")
-
-    def test_participant_change_rearms_action(self):
-        engine = GestureEngine()
-        first, second = fake_hand("left-1", "middle"), fake_hand("right-2", "middle")
-        engine.update_pose([first], 0)
-        before = engine.update_pose([first], 100)
-        self.assertEqual(before["mode"], "rotate")
-        self.assertEqual(engine.update_pose([second], 110)["mode"], "hover")
-        after = engine.update_pose([second], 210)
-        self.assertEqual(after["mode"], "rotate")
-        self.assertGreater(after["event_id"], before["event_id"])
-
-    def test_fist_idles(self):
-        self.assertEqual(GestureEngine().update_pose([fake_hand(opened=False)], 0)["mode"], "idle")
+class HandEngineTests(unittest.TestCase):
+    def test_records_have_stable_ids_fingers_and_debounced_pinches(self):
+        engine = HandEngine()
+        detection = IdentityTests.detection("Left", 0.2)
+        first = engine.process([detection], 0)[0]
+        second = engine.process([detection], 40)[0]
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(set(second["fingers"]), set(FINGERS))
+        self.assertEqual(set(second["pinches"]), set(TIPS))
+        self.assertEqual(second["palm"], [0.2, 0.5])
 
     def test_duplicate_input_timestamp_rejected(self):
-        engine = GestureEngine()
+        engine = HandEngine()
         engine.process([], 100)
         with self.assertRaises(ValueError):
             engine.process([], 100)
 
-    def test_capture_stall_discards_old_hand_identity_and_action(self):
-        engine = GestureEngine()
+    def test_capture_stall_discards_old_hand_identity(self):
+        engine = HandEngine()
         detection = IdentityTests.detection("Left", 0.2)
-        first, _ = engine.process([detection], 0)
-        engine._set_mode("grab", [first[0]["id"]])
-        previous_event = engine.event_id
-        resumed, gesture = engine.process([detection], 600)
+        first = engine.process([detection], 0)
+        resumed = engine.process([detection], 600)
         self.assertNotEqual(resumed[0]["id"], first[0]["id"])
-        self.assertNotEqual(gesture["mode"], "grab")
-        self.assertGreater(gesture["event_id"], previous_event)
 
 
 if __name__ == "__main__":

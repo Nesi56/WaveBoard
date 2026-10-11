@@ -1,4 +1,4 @@
-"""Finger geometry and debounced gesture state, independent of camera libraries.
+"""Finger geometry, debounced pinches and hand identities, independent of camera libraries.
 
 Landmarks are mirrored normalized image coordinates. World landmarks, when
 available, are used for joint angles so finger extension does not depend on
@@ -142,90 +142,29 @@ class HandIdentities:
         return result
 
 
-class GestureEngine:
-    def __init__(self, pose_debounce_ms=100):
+class HandEngine:
+    """Detections -> hand records with stable ids, finger states and debounced pinches."""
+
+    def __init__(self):
         self.identities = HandIdentities()
-        self.pose_debounce_ms = pose_debounce_ms
-        self.mode = "idle"
-        self.participants = ()
-        self.event_id = 0
-        self.candidate = None
-        self.candidate_since = 0
         self.last_timestamp = None
 
-    def _set_mode(self, mode, participants):
-        key = tuple(sorted(participants))
-        if (mode, key) != (self.mode, self.participants):
-            self.mode, self.participants = mode, key
-            self.event_id += 1
-
     def process(self, detections, timestamp_ms, aspect_ratio=16 / 9):
-        """Return (public hand records, gesture). Timestamps are monotonic ms."""
+        """Return [{id, landmarks, fingers, pinches, palm}]. Timestamps are monotonic ms."""
         if self.last_timestamp is not None and timestamp_ms <= self.last_timestamp:
-            raise ValueError("Gesture timestamps must increase monotonically")
+            raise ValueError("Hand timestamps must increase monotonically")
         if self.last_timestamp is not None and timestamp_ms - self.last_timestamp > 500:
-            # A stalled camera/inference loop is also a loss of tracking, even
-            # if the next detector result contains a hand in the same location.
+            # A stalled camera or inference loop is also a loss of tracking, even
+            # if the next result contains a hand in the same location.
             self.identities.assign([])
-            self.candidate = None
-            self._set_mode("idle", ())
         self.last_timestamp = timestamp_ms
-        tracks = self.identities.assign(detections)
         hands = []
-        for detection, track in zip(detections, tracks):
+        for detection, track in zip(detections, self.identities.assign(detections)):
             landmarks = detection["landmarks"]
             if len(landmarks) != 21:
                 raise ValueError("Each hand must contain 21 landmarks")
             points = detection.get("world_landmarks") or image_geometry(landmarks, aspect_ratio)
-            states = finger_states(points)
-            pinches = track.pinch.update(pinch_ratios(landmarks, aspect_ratio), timestamp_ms)
-            wrist, middle = landmarks[0], landmarks[9]
-            roll = math.atan2((middle[0] - wrist[0]) * aspect_ratio, wrist[1] - middle[1])
-            hands.append({"id": track.identity, "landmarks": landmarks,
-                          "fingers": states, "pinches": pinches, "palm": track.palm[:], "roll": roll})
-        return hands, self.update_pose(hands, timestamp_ms, aspect_ratio)
-
-    def update_pose(self, hands, timestamp_ms, aspect_ratio=16 / 9):
-        """Resolve exclusive modes. Also useful for deterministic state tests."""
-        hands = sorted(hands, key=lambda hand: hand["id"])
-        pinched = [(h, name) for h in hands for name, active in h["pinches"].items() if active]
-        raw, chosen = "hover", hands
-        if not hands or all(not any(h["fingers"].values()) and not any(h["pinches"].values()) for h in hands):
-            raw, chosen = "idle", []
-        elif len(hands) == 2 and all(h["pinches"]["index"] for h in hands):
-            raw = "zoom"
-        elif len(hands) == 2 and all(all(h["fingers"].values()) and not any(h["pinches"].values()) for h in hands):
-            raw = "explode"
-        elif len(pinched) == 1:
-            chosen = [pinched[0][0]]
-            raw = {"index": "grab", "middle": "rotate", "ring": "next_part", "pinky": "reset"}[pinched[0][1]]
-        key = (raw, tuple(h["id"] for h in chosen))
-        if key != self.candidate:
-            self.candidate, self.candidate_since = key, timestamp_ms
-        wait = {"next_part": 300, "reset": 700}.get(raw, self.pose_debounce_ms)
-        if raw in ("idle", "hover") or timestamp_ms - self.candidate_since >= wait:
-            self._set_mode(raw, key[1])
-        elif (self.mode, self.participants) != key:
-            # Stop the previous action immediately during acquisition of a new
-            # pose; the browser must take a fresh baseline on a new event_id.
-            self._set_mode("hover" if hands else "idle", tuple(h["id"] for h in hands))
-        active = [h for h in hands if h["id"] in self.participants]
-        cursor, span, roll = None, None, None
-        if active:
-            if self.mode in ("zoom", "explode") and len(active) == 2:
-                if self.mode == "zoom":
-                    anchors = [[(h["landmarks"][4][axis] + h["landmarks"][8][axis]) / 2 for axis in (0, 1)] for h in active]
-                else:
-                    anchors = [h["palm"] for h in active]
-                cursor = [sum(p[axis] for p in anchors) / 2 for axis in (0, 1)]
-                # Span in frame-height units: correct for camera aspect ratio.
-                span = distance([anchors[0][0] * aspect_ratio, anchors[0][1]],
-                                [anchors[1][0] * aspect_ratio, anchors[1][1]])
-            else:
-                hand = active[0]
-                tip = {"grab": 8, "rotate": 12, "next_part": 16, "reset": 20}.get(self.mode, 8)
-                cursor = hand["landmarks"][tip][:2]
-                roll = hand["roll"]
-            cursor = [max(0.0, min(1.0, float(v))) for v in cursor]
-        return {"mode": self.mode, "event_id": self.event_id, "cursor": cursor,
-                "distance": span, "roll": roll}
+            hands.append({"id": track.identity, "landmarks": landmarks, "fingers": finger_states(points),
+                          "pinches": track.pinch.update(pinch_ratios(landmarks, aspect_ratio), timestamp_ms),
+                          "palm": track.palm[:]})
+        return hands

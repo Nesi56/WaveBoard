@@ -14,4 +14,4 @@ fi
 python -m pip install 'websockets>=14,<18'
 python download_model.py
 python -m pip freeze > environment-working.txt
-echo 'Setup complete. Start with: python canvas_studio.py  (or python server.py for the 3D viewer)'
+echo 'Setup complete. From the WaveBoard folder start everything with: bash scripts/start-ubuntu.sh --hands'

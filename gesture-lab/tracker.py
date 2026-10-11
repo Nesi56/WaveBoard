@@ -1,7 +1,9 @@
-"""MediaPipe camera worker for the local Gesture Lab server.
+"""MediaPipe camera worker for WaveBoard hand control.
 
 The camera capture thread overwrites its single latest frame so slow inference
-does not accumulate a delayed queue. MediaPipe runs on CPU in VIDEO mode.
+does not accumulate a delayed queue. MediaPipe runs on CPU in VIDEO mode. The
+camera image never leaves this process: each frame publishes only the hand
+pointer and skeleton points that web/hands.js draws.
 """
 
 import argparse
@@ -11,7 +13,7 @@ from pathlib import Path
 import threading
 import time
 
-from gestures import GestureEngine
+from gestures import HandEngine
 from hand_pointer import HandPointer
 
 
@@ -22,22 +24,30 @@ def positive_int(value):
     return number
 
 
+def confidence(value):
+    number = float(value)
+    if not 0.05 <= number <= 0.95:
+        raise argparse.ArgumentTypeError("must be between 0.05 and 0.95")
+    return number
+
+
 def register_arguments(parser):
-    register_camera_arguments(parser)
-    parser.add_argument("--max-frame-age-ms", type=positive_int, default=250, help="discard frames older than this before inference")
-    parser.add_argument("--preview", action="store_true", help="optional OpenCV camera window (requires a desktop)")
-    parser.add_argument("--reach", type=float, default=0.12,
-                        help="WaveBoard pointer: fraction of each camera edge ignored so hands reach the screen edges")
-
-
-def register_camera_arguments(parser):
     parser.add_argument("--camera", default="0", help="V4L2 index or path, e.g. /dev/video0")
     parser.add_argument("--width", type=positive_int, default=1280, help="requested camera width")
     parser.add_argument("--height", type=positive_int, default=720, help="requested camera height")
     parser.add_argument("--fps", type=positive_int, default=30, help="requested capture FPS; device may negotiate less")
-    parser.add_argument("--processing-width", type=positive_int, default=640, help="inference width; preserves aspect ratio")
-    parser.add_argument("--model", type=Path, default=Path(__file__).with_name("hand_landmarker.task"))
     parser.add_argument("--fourcc", choices=("MJPG", "YUYV"), default="MJPG", help="requested camera pixel format")
+    # MediaPipe crops each hand from this image, so full resolution keeps distant
+    # hands sharp; it measured about as fast as 640 px.
+    parser.add_argument("--processing-width", type=positive_int, default=1280,
+                        help="inference width; preserves aspect ratio (default: full 1280 px frame)")
+    parser.add_argument("--detection-confidence", type=confidence, default=0.5,
+                        help="hand detection threshold; lower (e.g. 0.35) finds hands farther from the camera, "
+                             "but may mistake other objects for hands (default 0.5)")
+    parser.add_argument("--reach", type=float, default=0.12,
+                        help="fraction of each camera edge ignored so hands reach the screen edges (default 0.12)")
+    parser.add_argument("--model", type=Path, default=Path(__file__).with_name("hand_landmarker.task"))
+    parser.add_argument("--max-frame-age-ms", type=positive_int, default=250, help="discard frames older than this before inference")
 
 
 class RateMeter:
@@ -149,9 +159,9 @@ def landmarker_options(python, vision, args):
         base_options=python.BaseOptions(model_asset_path=str(model)),
         running_mode=vision.RunningMode.VIDEO,
         num_hands=2,
-        min_hand_detection_confidence=0.6,
-        min_hand_presence_confidence=0.6,
-        min_tracking_confidence=0.6,
+        min_hand_detection_confidence=getattr(args, "detection_confidence", 0.5),
+        min_hand_presence_confidence=getattr(args, "detection_confidence", 0.5),
+        min_tracking_confidence=0.5,
     )
 
 
@@ -181,21 +191,6 @@ def detect_hands(cv2, mp, np, landmarker, frame, timestamp, processing_width):
     return detections, frame
 
 
-def _preview(cv2, frame, hands, gesture):
-    height, width = frame.shape[:2]
-    for hand in hands:
-        points = [(int(p[0] * width), int(p[1] * height)) for p in hand["landmarks"]]
-        for chain in ((0, 1, 2, 3, 4), (0, 5, 6, 7, 8), (5, 9, 10, 11, 12),
-                      (9, 13, 14, 15, 16), (13, 17, 18, 19, 20), (0, 17)):
-            for start, end in zip(chain, chain[1:]):
-                cv2.line(frame, points[start], points[end], (180, 210, 150), 2)
-        for point in points:
-            cv2.circle(frame, point, 3, (0, 240, 255), -1)
-    cv2.putText(frame, f"{gesture['mode']} | Q: quit", (12, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    cv2.imshow("Gesture Lab - mirrored camera", frame)
-
-
 def run(stop_event, publish, args):
     """Run in a worker thread. publish(packet) must be safe from this thread.
 
@@ -204,7 +199,6 @@ def run(stop_event, publish, args):
     """
     capture = None
     camera = None
-    cv2 = None
     try:
         import cv2
         import mediapipe as mp
@@ -217,7 +211,7 @@ def run(stop_event, publish, args):
         publish({"type": "status", "level": "info", "message":
                  f"Camera reports {camera_info['width']}×{camera_info['height']} at "
                  f"{camera_info['negotiated_fps']:g} FPS (requested {args.fps}). Loading CPU hand tracker."})
-        engine, meter = GestureEngine(), RateMeter()
+        engine, meter = HandEngine(), RateMeter()
         pointer = HandPointer(reach=min(max(args.reach, 0.0), 0.3))
         sequence, frame_sequence, last_timestamp = 0, 0, -1
         capture = LatestFrameCapture(camera, stop_event)
@@ -242,18 +236,13 @@ def run(stop_event, publish, args):
                 frame = cv2.flip(frame, 1)
                 height, width = frame.shape[:2]
                 camera_info.update(width=width, height=height)
-                detections, frame = detect_hands(cv2, mp, np, landmarker, frame, timestamp, args.processing_width)
-                hands, gesture = engine.process(detections, timestamp, width / height)
+                detections, _ = detect_hands(cv2, mp, np, landmarker, frame, timestamp, args.processing_width)
+                hands = engine.process(detections, timestamp, width / height)
                 tracking_rate = meter.tick(time.monotonic())
                 sequence += 1
                 publish({"type": "frame", "seq": sequence, "timestamp": timestamp,
                          "tracking_fps": round(tracking_rate, 1), "capture_fps": round(capture_rate, 1),
-                         "camera": camera_info.copy(), "hands": hands, "gesture": gesture,
-                         "pointer": pointer.update(hands, timestamp, width / height)})
-                if args.preview:
-                    _preview(cv2, frame, hands, gesture)
-                    if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
-                        stop_event.set()
+                         "camera": camera_info.copy(), "pointer": pointer.update(hands, timestamp, width / height)})
     except Exception as exc:
         publish({"type": "status", "level": "error", "message": f"{type(exc).__name__}: {exc}"})
     finally:
@@ -261,13 +250,11 @@ def run(stop_event, publish, args):
             capture.close()
         elif camera is not None:
             camera.release()
-        if cv2 is not None and args.preview:
-            cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
     import json
-    parser = argparse.ArgumentParser(description="Gesture Lab camera tracker (JSON output)")
+    parser = argparse.ArgumentParser(description="WaveBoard hand tracker (JSON lines on stdout)")
     register_arguments(parser)
     try:
         run(threading.Event(), lambda packet: print(json.dumps(packet), flush=True), parser.parse_args())
