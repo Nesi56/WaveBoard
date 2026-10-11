@@ -13,17 +13,18 @@ const escapeHTML = (v) =>
       ],
   );
 const paths = {
-  home: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
+  home: '<path d="m3 10 9-8 9 8v11h-6v-8H9v8H3z"/>',
   pen: '<path d="m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-5-5L4 14z"/>',
   cube: '<path d="m12 3 9 5v9l-9 5-9-5V8zM3 8l9 5 9-5M12 13v9M7.5 5.5l9 5"/>',
   folder:
     '<path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
-  play: '<rect x="3" y="4" width="18" height="16" rx="4"/><path d="m10 8 6 4-6 4z"/>',
+  play: '<path d="m7 4 13 8-13 8z"/>',
   slides:
-    '<rect x="3" y="3" width="18" height="14" rx="2"/><path d="M12 17v5m-4 0 4-3 4 3M7 8h6m-6 4h10"/>',
+    '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="m10 7 5 3-5 3zM8 21h8"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.5 1-1.5 1.5-1.5 2M12 17h.01"/>',
   settings:
-    '<path d="m10 3-.7 2.1-2 .9-2.1-.5-2 3.5 1.4 1.7v2.4L3.2 15l2 3.5 2.1-.5 2 .9.7 2.1h4l.7-2.1 2-.9 2.1.5 2-3.5-1.4-1.9v-2.4L21 9l-2-3.5-2.1.5-2-.9L14 3z"/><circle cx="12" cy="12" r="3"/>',
+    '<path d="M3 6h9m4 0h5M3 12h3m4 0h11M3 18h11m4 0h3"/><circle cx="14" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="18" r="2"/>',
+  target: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><circle cx="12" cy="12" r="4"/>',
   plus: '<path d="M12 4v16M4 12h16"/>',
   minus: '<path d="M4 12h16"/>',
   expand: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
@@ -54,6 +55,12 @@ const paths = {
   spark:
     '<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5zM20 2v4m-2-2h4"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
+  pause: '<path d="M8 5v14M16 5v14" stroke-width="5"/>',
+  volume: '<path d="M11 4 6 8H3v8h3l5 4zM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>',
+  muted: '<path d="M11 4 6 8H3v8h3l5 4zM16 9l6 6m0-6-6 6"/>',
+  list: '<path d="M7 6h14M7 12h14M7 18h14M3 6h.01M3 12h.01M3 18h.01"/>',
+  up: '<path d="M12 21V3m-7 7 7-7 7 7"/>',
+  search: '<circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/>',
 };
 const icon = (name) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.file}</svg>`;
@@ -187,11 +194,11 @@ function remember(root, entry) {
     localStorage.setItem("waveboard-recent", JSON.stringify(latestFile));
   } catch {}
 }
-function heading(title, actions = "") {
-  return `<header class="utility-header"><h1>${title}</h1><div class="button-row">${actions}</div></header>`;
-}
 const button = (id, label, ico, kind = "") =>
   `<button id="${id}" class="button ${kind}">${ico ? icon(ico) : ""}${label}</button>`;
+const roundButton = (id, label, ico, extra = "") =>
+  `<button id="${id}" class="round-control" aria-label="${label}" title="${label}" ${extra}>${icon(ico)}</button>`;
+const homeButton = () => `<button class="round-control workspace-home" data-page="home" aria-label="Home" title="Home">${icon("home")}</button>`;
 function modal(title, body, actions = "") {
   closeMenu();
   $("#dialog-content").innerHTML =
@@ -345,10 +352,11 @@ function downloadBlob(blob, name) {
 async function renderModels() {
   const token = state.navToken;
   $("#main").innerHTML =
-    `<section class="utility-screen">${heading("3D", button("open-model", "Open", "folder"))}<div class="viewer-wrap"><div id="viewer-host" class="viewer-host"></div><div class="viewer-label"><span id="model-name">Wave sculpture</span></div></div></section>`;
+    `<section class="model-workspace"><div class="model-heading"><span class="model-dot"></span><span>3D Viewer · <span id="model-name">Wave sculpture</span></span>${button("open-model", "Open", "folder", "secondary")}</div><div class="viewer-wrap"><div id="viewer-host" class="viewer-host"></div><div class="model-zoom">${roundButton("zoom-model-in", "Zoom in", "plus")}${roundButton("zoom-model-out", "Zoom out", "minus")}</div><p class="gesture-hint model-hint">Pinch and drag to rotate</p></div><footer class="workspace-footer">${homeButton()}<div class="control-dock">${roundButton("reset-model", "Reset view", "rotate")}${roundButton("auto-rotate", "Auto rotate", "spark", 'aria-pressed="false"')}${roundButton("wire-mode", "Wireframe", "cube", 'aria-pressed="false"')}${roundButton("model-fullscreen", "Full screen", "expand")}</div></footer></section>`;
   setMenu(
-    `${button("solid-mode", "Solid", "cube", "menu-tool")}${button("wire-mode", "Wireframe", "grid", "menu-tool")}${button("zoom-model-in", "Zoom in", "plus", "menu-tool")}${button("zoom-model-out", "Zoom out", "minus", "menu-tool")}${button("reset-model", "Reset view", "expand", "menu-tool")}${button("auto-rotate", "Rotate", "rotate", "menu-tool")}<p id="model-status" class="menu-note" role="status">Loading…</p>`,
+    `${button("solid-mode", "Solid surfaces", "cube", "menu-tool")}<p id="model-status" class="menu-note" role="status">Loading…</p>`,
   );
+  $("#model-fullscreen").onclick = () => setFullscreen(!isFullscreen()).catch(() => toast("Full screen could not be changed."));
   $("#open-model").onclick = () =>
     pickFile(
       "Open a 3D model",
@@ -383,16 +391,23 @@ async function renderModels() {
       return;
     }
     state.viewer = viewer;
-    let rotate = false;
-    $("#solid-mode").onclick = () => state.viewer.setMode("solid");
-    $("#wire-mode").onclick = () => state.viewer.setMode("wireframe");
+    let rotate = false, wireframe = false;
+    const setWireframe = (enabled) => {
+      wireframe = enabled;
+      state.viewer.setMode(wireframe ? "wireframe" : "solid");
+      $("#wire-mode").setAttribute("aria-pressed", String(wireframe));
+    };
+    $("#solid-mode").onclick = () => setWireframe(false);
+    $("#wire-mode").onclick = () => setWireframe(!wireframe);
     $("#reset-model").onclick = () => state.viewer.reset();
     $("#zoom-model-in").onclick = () => state.viewer.zoom(0.8);
     $("#zoom-model-out").onclick = () => state.viewer.zoom(1.25);
     $("#auto-rotate").onclick = () => {
       rotate = !rotate;
       state.viewer.setAutoRotate(rotate);
-      $("#auto-rotate").textContent = rotate ? "Stop rotation" : "Auto rotate";
+      $("#auto-rotate").setAttribute("aria-pressed", String(rotate));
+      $("#auto-rotate").setAttribute("aria-label", rotate ? "Stop rotation" : "Auto rotate");
+      $("#auto-rotate").title = rotate ? "Stop rotation" : "Auto rotate";
     };
   } catch (e) {
     if (token === state.navToken)
@@ -440,12 +455,18 @@ function bindSearchKeyboard(input) {
   });
 }
 let fileQuery = "";
+let fileView = "grid";
 async function renderFiles() {
   $("#main").innerHTML =
-    `<section class="utility-screen">${heading("Files", button("choose-location", "Location", "folder"))}<div class="file-toolbar"><button class="icon-button" id="parent-folder" aria-label="Parent folder">${icon("back")}</button><span class="breadcrumb" id="file-path">Loading…</span></div><div class="file-content"><div id="file-list" class="file-list"><div class="empty-state"><div class="loading-dot"></div></div></div></section>`;
+    `<section class="files-workspace"><div class="files-body"><aside class="file-sidebar" aria-label="File locations"><h1>Files</h1><div id="file-locations"></div><div id="usb-status"></div></aside><div class="file-browser"><div class="file-toolbar">${button("choose-location", "Location", "folder", "secondary")}<span class="breadcrumb" id="file-path">Loading…</span></div><div class="file-content"><div id="file-list" class="file-list file-cards"><div class="empty-state"><div class="loading-dot"></div></div></div></div></div></div><footer class="workspace-footer">${homeButton()}<div class="control-dock">${roundButton("parent-folder", "Parent folder", "up")}${roundButton("file-grid", "Grid view", "grid", 'aria-pressed="true"')}${roundButton("file-lines", "List view", "list", 'aria-pressed="false"')}</div>${button("upload-file", "Import", "upload", "files-import")}</footer></section>`;
   setMenu(
-    `${button("upload-file", "Import", "upload", "menu-tool")}${button("find-file", "Find file", "file", "menu-tool")}${button("refresh-files", "Refresh", "rotate", "menu-tool")}`,
+    `${button("upload-file-menu", "Import", "upload", "menu-tool")}${button("find-file", "Find file", "search", "menu-tool")}${button("refresh-files", "Refresh", "rotate", "menu-tool")}`,
   );
+  $("#upload-file-menu").onclick = () => $("#upload-file").click();
+  for (const [id, view] of [["#file-grid", "grid"], ["#file-lines", "list"]]) $(id).onclick = () => {
+    fileView = view;
+    renderFileRows();
+  };
   $("#choose-location").onclick = async () => {
     try {
       await refreshRoots();
@@ -534,6 +555,20 @@ async function renderFiles() {
         `<div class="empty-state"><h2>Files unavailable</h2><p>${escapeHTML(e.message)}</p></div>`;
   }
 }
+function renderFileLocations() {
+  const host = $("#file-locations");
+  if (!host) return;
+  host.innerHTML = state.roots.map(root => `<button class="location-pill ${state.root === root.id ? "active" : ""}" data-location="${escapeHTML(root.id)}" aria-current="${state.root === root.id ? "location" : "false"}">${icon(root.kind === "usb" ? "usb" : root.id === "demo" ? "spark" : "folder")}<span>${escapeHTML(root.label)}</span></button>`).join("");
+  $$("[data-location]").forEach(element => element.onclick = () => {
+    state.root = element.dataset.location;
+    state.path = "";
+    fileQuery = "";
+    listFiles();
+  });
+  const usb = state.roots.find(root => root.kind === "usb");
+  $("#usb-status").innerHTML = usb ? `<div class="usb-card"><strong>● USB drive connected</strong><span>${escapeHTML(usb.label)}</span><button class="button" id="browse-usb">Browse drive</button></div>` : "";
+  if (usb) $("#browse-usb").onclick = () => { state.root = usb.id; state.path = ""; fileQuery = ""; listFiles(); };
+}
 let fileRequest = 0;
 async function listFiles() {
   const req = ++fileRequest;
@@ -543,12 +578,11 @@ async function listFiles() {
     );
     if (req !== fileRequest || state.page !== "files") return;
     state.entries = result.entries;
-    $("#file-path").textContent =
-      state.path ||
-      state.roots.find((r) => r.id === state.root)?.label ||
-      "Files";
+    $("#file-path").textContent = [state.roots.find((r) => r.id === state.root)?.label || "Files", ...state.path.split("/").filter(Boolean)].join(" › ");
     $("#parent-folder").disabled = !state.path;
     $("#upload-file").disabled = state.root === "demo";
+    $("#upload-file-menu").disabled = state.root === "demo";
+    renderFileLocations();
     renderFileRows();
   } catch (e) {
     if (req === fileRequest) toast(e.message);
@@ -558,11 +592,15 @@ function renderFileRows() {
   const entries = state.entries.filter((e) =>
     e.name.toLowerCase().includes(fileQuery.toLowerCase()),
   );
+  $("#file-list").classList.toggle("file-cards", fileView === "grid");
+  $("#file-list").classList.toggle("file-lines", fileView === "list");
+  $("#file-grid").setAttribute("aria-pressed", String(fileView === "grid"));
+  $("#file-lines").setAttribute("aria-pressed", String(fileView === "list"));
   $("#file-list").innerHTML = entries.length
     ? entries
         .map(
           (e, i) =>
-            `<div class="file-row"><button class="file-open" data-file="${i}">${icon(fileIcon(e))}<span class="file-name">${escapeHTML(e.name)}</span></button><button class="file-details icon-button" data-details="${i}" aria-label="Details for ${escapeHTML(e.name)}">${icon("more")}</button></div>`,
+            `<div class="file-row file-kind-${fileIcon(e)}"><button class="file-open" data-file="${i}"><span class="file-art">${icon(fileIcon(e))}</span><span class="file-caption"><span class="file-name">${escapeHTML(e.name)}</span><span class="file-meta">${e.is_dir ? "Folder" : `${escapeHTML(extension(e.name).toUpperCase())} · ${sizeLabel(e.size || 0)}`}</span></span></button><button class="file-details icon-button" data-details="${i}" aria-label="Details for ${escapeHTML(e.name)}">${icon("more")}</button></div>`,
         )
         .join("")
     : `<div class="empty-state">${icon("folder")}<h2>${fileQuery ? "No matching files" : "Empty folder"}</h2>${fileQuery ? button("reset-search", "Show all files", "folder") : ""}</div>`;
@@ -598,6 +636,7 @@ function bindHold(element, action) {
     held = false;
     start = [e.clientX, e.clientY];
     timer = setTimeout(() => {
+      if (!element.isConnected) return;
       held = true;
       action();
     }, 600);
@@ -799,9 +838,9 @@ async function pickFile(title, extensions, onPick, onLocal) {
 }
 function renderVideo() {
   $("#main").innerHTML =
-    `<section class="utility-screen">${heading("Video", button("open-video", "Open", "folder"))}<div class="media-stage" id="media-stage"><div class="empty-state">${icon("play")}<button class="button" id="video-empty-open">Open a video</button></div></div><div class="media-controls" id="video-controls" hidden><button class="icon-button" id="video-play" aria-label="Play">${icon("play")}</button><input id="video-seek" type="range" min="0" max="1000" value="0" aria-label="Video position"><span id="video-time">0:00</span><button class="icon-button" id="video-fullscreen" aria-label="Full screen video">${icon("expand")}</button></div></section>`;
+    `<section class="video-workspace"><header class="video-heading"><h1 id="video-title">Video</h1>${button("open-video", "Open", "folder", "secondary")}</header><div class="media-stage" id="media-stage"><svg class="video-landscape" viewBox="0 0 900 510" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs><linearGradient id="video-sky" x2="0" y2="1"><stop stop-color="#244d63"/><stop offset="1" stop-color="#112b3a"/></linearGradient></defs><path fill="url(#video-sky)" d="M0 0h900v510H0z"/><circle cx="715" cy="123" r="52" fill="#ffda60"/><path d="M0 320 150 215 320 318 530 172 760 339 900 271V510H0" fill="#1b3e50"/><path d="m0 389 220-83 240 91 225-73 215 80v106H0" fill="#0b232f"/></svg><button id="video-empty-open" class="video-poster-open" aria-label="Open a video"><span>${icon("play")}</span><strong>Open a video</strong></button></div><div class="media-controls" id="video-controls"><span id="video-time">0:00</span><input id="video-seek" type="range" min="0" max="1000" value="0" aria-label="Video position" disabled><span id="video-duration">0:00</span></div><footer class="workspace-footer">${homeButton()}<div class="control-dock">${roundButton("video-back", "Back 10 seconds", "undo", "disabled")}${roundButton("video-play", "Play", "play", "disabled")}${roundButton("video-forward", "Forward 10 seconds", "redo", "disabled")}${roundButton("mute-video", "Mute", "volume", "disabled")}</div><button id="video-speed" class="round-control video-speed" aria-label="Playback speed: 1 times" disabled>1×</button></footer></section>`;
   setMenu(
-    `${button("mute-video", "Mute", "play", "menu-tool")}<p class="menu-note" id="video-info">Open an MP4 or WebM.</p>`,
+    `${button("video-fullscreen", "Full screen video", "expand", "menu-tool")}<p class="menu-note" id="video-info">Open an MP4 or WebM.</p>`,
   );
   const pick = () =>
     pickFile(
@@ -816,6 +855,7 @@ function renderVideo() {
   $("#open-video").onclick = pick;
   $("#video-empty-open").onclick = pick;
   $("#mute-video").disabled = true;
+  $("#video-fullscreen").onclick = () => setFullscreen(!isFullscreen()).catch(() => toast("Full screen could not be changed."));
 }
 const mediaTime = (seconds) =>
   `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
@@ -840,20 +880,31 @@ function setVideo(url, name) {
   video.src = url;
   $("#video-controls").hidden = false;
   $("#video-info").textContent = name;
-  $("#mute-video").disabled = false;
-  $("#mute-video").textContent = "Mute";
+  $("#video-title").textContent = name;
+  for (const id of ["#mute-video", "#video-play", "#video-back", "#video-forward", "#video-speed"]) $(id).disabled = false;
   const sync = () => {
     if (!video.isConnected) return;
     const playing = !video.paused && !video.ended;
-    $("#video-play").innerHTML = playing
-      ? '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>'
-      : icon("play");
+    $("#video-play").innerHTML = icon(playing ? "pause" : "play");
     $("#video-play").setAttribute("aria-label", playing ? "Pause" : "Play");
+    $("#video-play").title = playing ? "Pause" : "Play";
     $("#video-time").textContent = mediaTime(video.currentTime);
-    $("#video-seek").disabled = !Number.isFinite(video.duration);
-    $("#video-seek").value = Number.isFinite(video.duration)
+    const seekable = Number.isFinite(video.duration) && video.duration > 0;
+    $("#video-duration").textContent = seekable ? mediaTime(video.duration) : "0:00";
+    $("#video-seek").disabled = !seekable;
+    $("#video-back").disabled = !seekable;
+    $("#video-forward").disabled = !seekable;
+    $("#video-seek").value = seekable
       ? String((video.currentTime / video.duration) * 1000)
       : "0";
+    $("#video-seek").style.setProperty("--played", `${Number($("#video-seek").value) / 10}%`);
+    $("#mute-video").innerHTML = icon(video.muted ? "muted" : "volume");
+    $("#mute-video").setAttribute("aria-label", video.muted ? "Unmute" : "Mute");
+    $("#mute-video").title = video.muted ? "Unmute" : "Mute";
+    $("#mute-video").setAttribute("aria-pressed", String(video.muted));
+    $("#video-speed").textContent = `${video.playbackRate}×`;
+    $("#video-speed").setAttribute("aria-label", `Playback speed: ${video.playbackRate} times`);
+    $("#video-speed").title = `Playback speed: ${video.playbackRate}×`;
   };
   for (const event of [
     "loadedmetadata",
@@ -861,6 +912,9 @@ function setVideo(url, name) {
     "play",
     "pause",
     "ended",
+    "durationchange",
+    "volumechange",
+    "ratechange",
   ])
     video.addEventListener(event, sync);
   $("#video-play").onclick = () =>
@@ -873,7 +927,13 @@ function setVideo(url, name) {
   };
   $("#mute-video").onclick = () => {
     video.muted = !video.muted;
-    $("#mute-video").textContent = video.muted ? "Unmute" : "Mute";
+  };
+  const skip = seconds => { if (Number.isFinite(video.duration)) video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + seconds)); };
+  $("#video-back").onclick = () => skip(-10);
+  $("#video-forward").onclick = () => skip(10);
+  $("#video-speed").onclick = () => {
+    const speeds = [1, 1.25, 1.5, 2, 0.5, 0.75];
+    video.playbackRate = speeds[(speeds.indexOf(video.playbackRate) + 1) % speeds.length];
   };
   $("#video-fullscreen").onclick = async () => {
     try {
@@ -910,9 +970,9 @@ function renderSlides() {
   state.slideIndex = 0;
   state.slideTitle = "Meet your new workspace";
   $("#main").innerHTML =
-    `<section class="utility-screen">${heading("Slides", button("open-slides", "Open", "folder"))}<div class="slide-stage" id="slide-stage"></div><div class="slide-controls"><button class="icon-button" id="prev-slide" aria-label="Previous slide">${icon("left")}</button><span class="slide-counter" id="slide-counter"></span><button class="icon-button" id="next-slide" aria-label="Next slide">${icon("right")}</button></div></section>`;
+    `<section class="slides-workspace"><div class="slide-deck">${roundButton("prev-slide", "Previous slide", "left")}<div class="slide-stage" id="slide-stage"></div>${roundButton("next-slide", "Next slide", "right")}</div><footer class="workspace-footer">${homeButton()}<div class="control-dock">${roundButton("open-slides", "Open slides", "folder")}${roundButton("present-slides", "Present slides", "expand")}<span class="slide-counter" id="slide-counter"></span></div><p class="gesture-hint slide-hint">Swipe palm to turn</p></footer></section>`;
   setMenu(
-    `${button("present-slides", "Present", "expand", "menu-tool")}<p id="slide-note" class="menu-note">Sample slides</p>`,
+    `<p id="slide-note" class="menu-note">Sample slides · Open a presentation using the folder button.</p>`,
   );
   showSlide();
   $("#prev-slide").onclick = () => advanceSlide(-1);
@@ -965,7 +1025,7 @@ function showSlide() {
     stage.innerHTML = `<img src="${escapeHTML(state.slidePages[state.slideIndex])}" alt="Slide ${state.slideIndex + 1}">`;
   } else {
     const s = demoSlides[state.slideIndex];
-    stage.innerHTML = `<div class="demo-slide"><h2>${s.title}</h2><p>${s.copy}</p></div>`;
+    stage.innerHTML = `<div class="demo-slide demo-slide-${state.slideIndex}"><div class="slide-orbits" aria-hidden="true"><span class="planet-large"></span><span class="planet-small"></span><span class="planet-tiny"></span></div><h2>${s.title}</h2><p>${s.copy}</p><div class="slide-progress" aria-hidden="true"><span style="width:${((state.slideIndex + 1) / count) * 100}%"></span></div></div>`;
   }
   stage.insertAdjacentHTML(
     "beforeend",
@@ -1067,7 +1127,7 @@ document.addEventListener("keydown", (event) => {
 $("#help-button").onclick = () =>
   modal(
     "Simple by design",
-    `<div class="dialog-copy"><p><strong>Hands:</strong> Move your index finger to point. Pinch thumb and index, then release to select. The highlighted control shows your target. Keep pinching and move up or down to scroll lists. Pinch and drag the video bar to seek.</p><p><strong>Home:</strong> Use the arrows. Tap a card to open it.</p><p><strong>Draw:</strong> Pick a color and dot size on the left. Drag to draw.</p><p><strong>Top tab:</strong> Open tools, save, or go Home.</p><p><strong>Files:</strong> Pinch to open. Use the three-dot button for details.</p><p><strong>3D:</strong> Pinch and drag to rotate. Use Zoom in and Zoom out in the menu.</p></div>`,
+    `<div class="dialog-copy"><p><strong>Hands:</strong> Move your index finger to point. Pinch thumb and index, then release to select. The highlighted control shows your target. Keep pinching and move up or down to scroll lists. Pinch and drag the video bar to seek.</p><p><strong>Home:</strong> Tap a tool card to open it.</p><p><strong>Whiteboard:</strong> Pick a pen and color, then drag to draw.</p><p><strong>More:</strong> The bottom-right button opens extra tools and settings. The home button returns to your tools.</p><p><strong>Files:</strong> Pinch to open. Use the three-dot button for details.</p><p><strong>3D:</strong> Pinch and drag to rotate. Use the + and − buttons to zoom.</p></div>`,
   );
 function alignHands() {
   closeMenu();

@@ -7,7 +7,7 @@ const mapping = await import(`data:text/javascript;base64,${Buffer.from(await re
 async function trackerFixture(preferences = null) {
   let now = 1000, receive;
   let saved = preferences;
-  const frames = [], intervals = [], inputs = [], elements = [], arcs = [], keys = [], listeners = {};
+  const frames = [], intervals = [], inputs = [], elements = [], arcs = [], keys = [], events = [], listeners = {};
   const context2d = new Proxy({}, { get: (_, key) => (...args) => { if (key === 'arc') arcs.push(args); } });
   const element = tag => {
     const el = { tag, style: {}, dataset: {}, hidden: false, parentElement: null, open: false,
@@ -24,21 +24,75 @@ async function trackerFixture(preferences = null) {
     WaveBoardDesktop: true,
     WaveBoardNative: Promise.resolve({ hands: { connect(callback) { receive = callback; } }, startHands() {} }),
     WaveBoardInput: { pointer(event) { inputs.push(event); return true; }, hover() {}, suspend() {} },
-    addEventListener(type, callback) { listeners[type] = callback; }, dispatchEvent() {} };
+    addEventListener(type, callback) { listeners[type] = callback; }, dispatchEvent(event) { events.push(event); } };
   vm.runInNewContext(source, { document: doc, window: win, location: { search: '' }, URLSearchParams,
     ...mapping, localStorage: { getItem: () => JSON.stringify(preferences), setItem(key, value) { saved = JSON.parse(value); } },
     performance: { now: () => now }, requestAnimationFrame: cb => frames.push(cb),
     setInterval: cb => intervals.push(cb), setTimeout() {},
-    CustomEvent: class {}, KeyboardEvent: class { constructor(type, data) { Object.assign(this, data); } }, console });
+    CustomEvent: class { constructor(type, data) { this.type = type; Object.assign(this, data); } },
+    KeyboardEvent: class { constructor(type, data) { Object.assign(this, data); } }, console });
   await Promise.resolve();
   const emit = (patch, frame = {}) => receive(JSON.stringify({ type: 'frame', ...frame, pointer: {
     visible: true, down: false, hand: 'right', x: 0.1, y: 0.5, swipe_id: 0, hands: [], ...patch,
   } }));
   const tick = (milliseconds = 16) => { now += milliseconds; const pending = frames.splice(0); pending.forEach(cb => cb(now)); };
   const cursor = elements.find(el => el.className === 'hand-cursor');
-  return { emit, tick, inputs, cursor, arcs, keys, listeners, elements, controls: win.WaveBoardHands, saved: () => saved,
+  return { emit, tick, inputs, cursor, arcs, keys, events, listeners, elements, controls: win.WaveBoardHands, saved: () => saved,
+    status: patch => receive(JSON.stringify({ type: 'status', ...patch })),
     expire(ms = 600) { now += ms; intervals.forEach(cb => cb()); } };
 }
+
+test('hand status reports fresh observations and only announces changes', async () => {
+  const f = await trackerFixture();
+  const states = () => f.events.filter(event => event.type === 'waveboard-hand-status').map(event =>
+    [event.detail.connected, event.detail.visible]);
+  assert.equal(f.controls.getTrackingStatus().connected, false);
+  assert.equal(f.controls.getTrackingStatus().visible, false);
+  f.emit({ observed: true });
+  f.emit({ observed: true });
+  assert.deepEqual(states(), [[true, true]]);
+  f.emit({ observed: false, predicted: true });
+  f.expire(501);
+  assert.deepEqual(states(), [[true, true], [false, false]]);
+  f.emit({ visible: false, observed: false });
+  assert.deepEqual(states().at(-1), [true, false]);
+  f.emit({ observed: true });
+  f.status({ level: 'error', message: 'Camera unavailable' });
+  assert.deepEqual(states().at(-1), [false, false]);
+});
+
+test('lost-hand notice requires a real hand, waits two seconds, and clears on return', async () => {
+  const f = await trackerFixture();
+  const notice = f.elements.find(element => element.className === 'hand-notice');
+  f.expire(3000);
+  assert.equal(notice.hidden, true, 'mouse-only users are never prompted to show a hand');
+  f.emit({ observed: false, predicted: true });
+  f.expire(3000);
+  assert.equal(notice.hidden, true, 'predicted positions cannot establish a real hand');
+  f.emit({ observed: true });
+  f.emit({ visible: false, observed: false });
+  f.expire(1900);
+  assert.equal(notice.hidden, true);
+  f.expire(100);
+  assert.equal(notice.hidden, false);
+  assert.equal(notice.textContent, 'Show your hand to continue');
+  f.emit({ observed: true });
+  assert.equal(notice.hidden, true);
+});
+
+test('calibration supplies its own hand guidance and suppresses the lost-hand notice', async () => {
+  const f = await trackerFixture({ projectorMode: true });
+  const notice = f.elements.find(element => element.className === 'hand-notice');
+  f.emit({ observed: true });
+  f.expire(2000);
+  assert.equal(notice.hidden, false);
+  f.controls.startCalibration();
+  f.expire(2000);
+  assert.equal(notice.hidden, true);
+  f.elements.find(element => element.className === 'button secondary calibration-cancel').onclick();
+  assert.equal(notice.hidden, false);
+  assert.equal(notice.parentElement.tag, 'body', 'notice survives closing the calibration dialog');
+});
 test('cursor eases between inference frames at display cadence', async () => {
   const f = await trackerFixture();
   f.emit({ x: 0.1 }); f.tick();

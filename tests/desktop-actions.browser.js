@@ -11,12 +11,13 @@ window.desktopActions = { checks: [], error: null, capture: null, readyToQuit: f
   const gesture = selector => {
     const element = typeof selector === 'string' ? document.querySelector(selector) : selector;
     if (!element) throw Error('Missing control ' + selector);
+    element.scrollIntoView({ block: 'center', inline: 'nearest' });
     const box = element.getBoundingClientRect();
     const at = { x: box.left + box.width / 2, y: box.top + box.height / 2, pointerId: 902, isPrimary: true };
     WaveBoardInput.pointer({ type: 'down', ...at });
     WaveBoardInput.pointer({ type: 'up', ...at });
   };
-  const entry = (selector, text) => [...document.querySelectorAll(selector)].find(button => button.textContent.trim() === text);
+  const entry = (selector, text) => [...document.querySelectorAll(selector)].find(button => (button.querySelector('.file-name') || button).textContent.trim() === text);
   const capture = async name => {
     await wait(350);
     const bounds = document.querySelector('#viewer-host canvas').getBoundingClientRect();
@@ -52,7 +53,6 @@ window.desktopActions = { checks: [], error: null, capture: null, readyToQuit: f
     await until(() => entry('[data-file]', 'Destination'), 'destination folder');
     gesture(entry('[data-file]', 'Destination'));
     await until(() => document.querySelector('#file-path').textContent.includes('Destination'), 'destination loaded');
-    gesture('#menu-toggle');
     gesture('#upload-file');
     await until(() => entry('[data-pick-file]', 'Source'), 'source picker');
     gesture(entry('[data-pick-file]', 'Source'));
@@ -64,11 +64,9 @@ window.desktopActions = { checks: [], error: null, capture: null, readyToQuit: f
     await WaveBoardInput.navigate('models');
     await until(() => document.querySelector('#viewer-host canvas'), '3D model renderer');
     await capture('before');
-    gesture('#menu-toggle');
     gesture('#zoom-model-in');
     check(document.querySelector('#workspace-menu').hidden, 'hand selects Zoom in');
     await capture('zoom_in');
-    gesture('#menu-toggle');
     gesture('#zoom-model-out');
     check(document.querySelector('#workspace-menu').hidden, 'hand selects Zoom out');
     await capture('zoom_out');

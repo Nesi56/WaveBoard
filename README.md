@@ -49,7 +49,7 @@ There is no Node build, cloud account, web hosting, or browser installation step
 3. Hold up one hand and move the round cursor onto a control. Pinch thumb and
    index, then release to select; hold a pinch and move to draw or drag.
    Swipe an open palm to browse Home cards or slides.
-4. Pinch the top tab to open the menu. Its buttons, dialogs, file locations,
+4. Pinch the bottom-right three-dot button to open the menu. Its buttons, dialogs, file locations,
    and settings all accept the same hand controls. Pinch and move up or down
    to scroll a list; drag the video bar to seek.
 5. Use the menu's **Fullscreen** button to change window mode. To finish, open
@@ -98,11 +98,11 @@ button accidentally; show an open hand before pinching again.
 
 ## Projector controls
 
-Home shows one large card at a time: **Draw**, **3D**, **Files**, **Video**, or **Slides**. Tap the left or right arrow to browse, then tap the card to open it. Keyboard arrow keys also browse the cards.
+Home shows colorful cards for **Whiteboard**, **Slides**, **Files**, **Video**, and **3D** against a dark navy background. Swipe an open palm or use the arrows to browse, then pinch or tap a card to open it. Keyboard arrow keys work too. Settings, calibration, and fullscreen are directly available from Home.
 
-The tab at the top opens the menu. It contains **Home**, the current utility's extra tools, fullscreen, help, and settings. Controls highlight under the hand cursor. On the drawing board, only the color palette and three brush-size dots stay visible; pen, marker, eraser, undo/redo, save, and clear are in the top menu. Clearing a board can be undone.
+The bottom-right three-dot button opens extra tools, fullscreen, help, and settings. Circular controls along the bottom keep common actions in reach, and coral outlines highlight the control under your hand. The whiteboard has a light dotted canvas and a drawing dock; its color control opens ink and brush-size choices. Save, redo, and clear remain available in the menu. Clearing a board can be undone.
 
-The other utilities keep their main content large. **3D** has one Open button, with view options in the top menu. **Files** uses large rows and a Location chooser; import, search, and refresh are in the menu. **Video** has large play/pause and seek controls, with mute in the menu. **Slides** has large previous/next buttons and a slide counter, with Present in the menu.
+The other utilities share the same dark background and bottom controls. **3D** exposes zoom and view controls around the model. **Files** shows colored file cards and actual device locations, with a Location chooser on narrower screens. **Video** has playback and seek controls. **Slides** keeps previous/next controls beside the presentation and a counter below it. Home is always one button away.
 
 The local file picker uses large buttons for folders and device/USB locations.
 In **Files**, choose the destination folder, then **Import** to copy a file from
@@ -152,8 +152,8 @@ removes it. Resizing the workspace or changing camera resolution clears it;
 run **Align hands** again after moving the camera, projector, or your working
 position. This is still a mapping at one working depth, not automatic 3D sensing.
 
-The interface uses larger text and controls for 480p projectors: 26px body text,
-28px menu text, and generous buttons. Long menus and Settings scroll instead of
+The interface uses larger text and controls for 480p projectors: 24–28px interface text
+and generous circular buttons. Long menus and Settings scroll instead of
 reducing the text size.
 
 Projector mode mirrors the skeleton, cursor, and horizontal gestures together

@@ -74,8 +74,8 @@ export async function createModelViewer(container, options = {}) {
   if (!(container instanceof HTMLElement)) throw new Error('A model viewer container is required.');
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x111b26);
-  scene.fog = new THREE.Fog(0x111b26, 13, 29);
+  scene.background = new THREE.Color(0x101e27);
+  scene.fog = new THREE.Fog(0x101e27, 13, 29);
   const camera = new THREE.PerspectiveCamera(39, 1, 0.05, 80);
   let renderer;
   try {
@@ -120,7 +120,7 @@ export async function createModelViewer(container, options = {}) {
 
   const floor = new THREE.Mesh(
     new THREE.CircleGeometry(16, 64),
-    new THREE.MeshStandardMaterial({ color: 0x152230, roughness: 1, metalness: 0 }),
+    new THREE.MeshStandardMaterial({ color: 0x101e27, roughness: 1, metalness: 0 }),
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.y = -1.82;

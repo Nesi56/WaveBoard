@@ -25,6 +25,7 @@ window.handUIResults = { checks: [], error: null };
   };
   try {
     await until(() => window.WaveBoardInput);
+    await WaveBoardInput.navigate('whiteboard');
     gesture('#menu-toggle', 20);
     check(!document.querySelector('#workspace-menu').hidden, 'hand opens menu with 20px jitter');
     gesture('#settings-button');
@@ -56,7 +57,6 @@ window.handUIResults = { checks: [], error: null };
     check(list.scrollTop > 0 || list.parentElement.scrollTop > 0, 'hand drag scrolls file list');
     check(!document.querySelector('#dialog').open, 'scroll does not open file');
     await WaveBoardInput.navigate('slides');
-    gesture('#menu-toggle');
     gesture('#present-slides');
     await until(() => document.querySelector('#slide-stage').classList.contains('presenting'));
     check(!!document.querySelector('.presenting .present-overlay'), 'hand enters presentation');

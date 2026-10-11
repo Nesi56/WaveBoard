@@ -23,6 +23,7 @@ if (savedCalibration?.width === window.innerWidth && savedCalibration?.height ==
 const params = new URLSearchParams(location.search);
 const PORT = Number(params.get("hands-port")) || 8766;
 const STALE_MS = 500;
+const HAND_NOTICE_MS = 2000;
 const RETRY_MS = 3000;
 // Joints glide toward each new tracking result, so the skeleton moves at the
 // display's frame rate even when the tracker updates 15-25 times a second.
@@ -35,9 +36,10 @@ const PALM = [0, 1, 5, 9, 13, 17];
 const HAND_POINTER_ID = 0x48414e44;
 const TIPS = new Set([4, 8, 12, 16, 20]);
 // The workspace palette (web/styles.css and the welcome slides).
-const DEEP = "#304b3b";
-const PAPER = "#fffefa";
-const SAGE = "#bed1ab";
+const DEEP = "#0d1b25";
+const PAPER = "#e8f1f5";
+const CORAL = "#ff7659";
+const MINT = "#78dcca";
 
 const style = document.createElement("style");
 style.textContent = `
@@ -45,29 +47,37 @@ style.textContent = `
 .hand-skeletons { position: absolute; inset: 0; width: 100%; height: 100%; }
 .hand-cursor {
   position: fixed; left: 0; top: 0; width: 38px; height: 38px; margin: -19px 0 0 -19px;
-  border: 4px solid var(--deep, ${DEEP}); border-radius: 50%;
-  background: rgb(255 255 255 / 0.35); box-shadow: 0 0 0 3px rgb(255 255 255 / 0.85);
-  transition: background 0.08s;
+  border: 4px solid ${CORAL}; border-radius: 50%;
+  background: white; box-shadow: 0 0 0 2px ${DEEP}, 0 0 14px rgb(255 118 89 / 0.4);
+  transition: box-shadow 0.08s;
 }
-.hand-cursor[data-down="true"] { background: var(--deep, ${DEEP}); }
+.hand-cursor[data-down="true"] { box-shadow: 0 0 0 2px ${DEEP}, 0 0 0 8px rgb(255 118 89 / 0.35); }
 .hand-cursor[data-tracking="recovering"] { opacity: 0.55; border-style: dashed; }
+.hand-notice { position: fixed; left: 50%; bottom: 112px; transform: translateX(-50%); z-index: 2147483646;
+  width: max-content; max-width: calc(100vw - 32px); padding: 14px 20px; border: 1px solid #294552;
+  border-radius: 18px; color: ${PAPER}; background: #192d3a; box-shadow: 0 8px 28px rgb(0 0 0 / 0.2);
+  font: 600 26px/1.25 sans-serif; text-align: center; pointer-events: none; }
+.hand-notice::before { content: ''; display: inline-block; width: 12px; height: 12px;
+  margin-right: 12px; border-radius: 50%; background: #ffb84d; vertical-align: 2px; }
 .projection-marker { position: absolute; width: min(10vw, 14vh); height: min(10vw, 14vh); transform: translate(-50%, -50%); }
 .projection-marker svg { display: block; width: 100%; height: 100%; }
 body[data-projection-alignment="true"][data-page="home"] .menu-toggle { right: 12%; }
 .projection-status { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); max-width: 75vw;
-  padding: 6px 14px; border-radius: 12px; color: ${DEEP}; background: ${PAPER}; font: 26px/1.2 sans-serif; text-align: center; }
+  padding: 6px 14px; border-radius: 12px; color: ${PAPER}; background: #192d3a; font: 26px/1.2 sans-serif; text-align: center; }
 dialog.hand-calibration { position: fixed; inset: 0; width: 100vw; height: 100vh; max-width: none; max-height: none;
-  margin: 0; padding: 0; border: 0; border-radius: 0; background: ${PAPER}; color: ${DEEP}; overflow: hidden; }
+  margin: 0; padding: 0; border: 0; border-radius: 0; background: ${DEEP}; color: ${PAPER}; overflow: hidden; }
 .hand-calibration h2 { position: absolute; top: 16px; left: 20px; right: 140px; margin: 0; font: bold 30px/1.2 sans-serif; }
+.hand-calibration .button { color: ${PAPER}; background: #192d3a; border: 2px solid #294552; border-radius: 14px; }
+.hand-calibration .button:hover, .hand-calibration .button:focus-visible { border-color: ${CORAL}; }
 .calibration-cancel { position: absolute; top: 12px; right: 12px; min-height: 60px; font-size: 26px; }
 .calibration-target { position: absolute; width: 72px; height: 72px; margin: -36px 0 0 -36px;
-  border: 5px solid ${DEEP}; border-radius: 50%; box-shadow: 0 0 0 7px #bed1ab; background: white; }
-.calibration-target::before, .calibration-target::after { content: ''; position: absolute; background: ${DEEP}; }
+  border: 5px solid ${MINT}; border-radius: 50%; box-shadow: 0 0 0 7px rgb(120 220 202 / 0.18); background: #192d3a; }
+.calibration-target::before, .calibration-target::after { content: ''; position: absolute; background: ${CORAL}; }
 .calibration-target::before { width: 4px; height: 20px; left: calc(50% - 2px); top: calc(50% - 10px); }
 .calibration-target::after { height: 4px; width: 20px; top: calc(50% - 2px); left: calc(50% - 10px); }
 .calibration-help { position: absolute; top: 32%; left: 23%; right: 23%; margin: 0; text-align: center; font: 600 26px/1.25 sans-serif; }
 .hand-calibration[data-step="4"] .calibration-help { top: 82px; left: 15%; right: 15%; }
-.calibration-progress { position: absolute; left: 25%; width: 50%; bottom: 28px; height: 22px; accent-color: ${DEEP}; }
+.calibration-progress { position: absolute; left: 25%; width: 50%; bottom: 28px; height: 22px; accent-color: ${MINT}; }
 .calibration-retry { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); font-size: 28px; }
 .hand-calibration[data-error="true"] .calibration-help { top: 28%; left: 12%; right: 12%; }`;
 document.head.append(style);
@@ -86,6 +96,12 @@ const projectionStatus = document.createElement("div");
 projectionStatus.className = "projection-status";
 layer.append(canvas, markers, projectionStatus, cursor);
 document.body.append(layer);
+const handNotice = document.createElement('div');
+handNotice.className = 'hand-notice';
+handNotice.textContent = 'Show your hand to continue';
+handNotice.setAttribute('role', 'status');
+handNotice.hidden = true;
+document.body.append(handNotice);
 const ctx = canvas.getContext("2d");
 
 let pressed = false;
@@ -107,6 +123,28 @@ let mappingRevision = projection.revision;
 let cameraGeometry = projection.handCalibration ? savedCalibration?.camera || null : null;
 let lastProjectionStatus = null;
 let calibrationSession = null;
+let lastTrackerFrameAt = null;
+let lastObservedHandAt = null;
+let handPresent = false;
+let trackingStatus = { connected: false, visible: false };
+
+function updateTrackingStatus() {
+  const now = performance.now();
+  const connected = lastTrackerFrameAt !== null && now - lastTrackerFrameAt <= STALE_MS;
+  const visible = connected && handPresent && lastObservedHandAt !== null &&
+    now - lastObservedHandAt <= STALE_MS && !document.hidden;
+  handNotice.hidden = Boolean(calibrationSession) || document.hidden || lastObservedHandAt === null ||
+    now - lastObservedHandAt < HAND_NOTICE_MS;
+  if (connected === trackingStatus.connected && visible === trackingStatus.visible) return;
+  trackingStatus = { connected, visible };
+  window.dispatchEvent(new CustomEvent('waveboard-hand-status', { detail: { ...trackingStatus } }));
+}
+
+function trackerDisconnected() {
+  lastTrackerFrameAt = null;
+  handPresent = false;
+  updateTrackingStatus();
+}
 
 function savePreferences() {
   const calibration = projection.handCalibration ? { ...projection.handCalibration,
@@ -122,7 +160,8 @@ function alignmentStatus() {
   const covered = Boolean(openModal() || (menu && !menu.hidden));
   projection.setBordersPaused(covered || Boolean(calibrationSession), performance.now());
   document.body.dataset.projectionAlignment = String(borders);
-  markers.hidden = projectionStatus.hidden = !borders || covered;
+  markers.hidden = !borders || covered;
+  projectionStatus.hidden = markers.hidden || !handNotice.hidden;
   projectionStatus.textContent = projection.status;
   if (lastProjectionStatus !== projection.status) {
     lastProjectionStatus = projection.status;
@@ -137,6 +176,7 @@ function mappingChanged() {
   shown.clear();
 }
 window.WaveBoardHands = Object.freeze({
+  getTrackingStatus: () => ({ ...trackingStatus }),
   getSettings: () => ({ mirrored: projection.mirrored, enabled: projection.enabled, status: projection.status,
     handCalibrated: projection.handCalibrated }),
   configure(options) {
@@ -195,6 +235,7 @@ function placeLayer() {
   // opened during full screen is above the full-screen element, so it comes first.
   const host = openModal() || document.fullscreenElement || document.body;
   if (layer.parentElement !== host) host.append(layer);
+  if (handNotice.parentElement !== host) host.append(handNotice);
 }
 
 function calibrationView() {
@@ -218,6 +259,7 @@ function finishCalibration() {
   if (!calibrationSession) return;
   const { dialog } = calibrationSession;
   calibrationSession = null;
+  updateTrackingStatus();
   lastSwipe = null; // Open-hand moves between targets are not workspace swipes.
   hide();
   shown.clear();
@@ -260,6 +302,7 @@ function startCalibration() {
   });
   document.body.append(dialog);
   calibrationSession = { dialog, title, help, target, progress, retry, fit: new HandCalibration(), retryArmed: false };
+  updateTrackingStatus();
   dialog.showModal();
   alignmentStatus();
   calibrationView();
@@ -445,9 +488,9 @@ function drawHand(points, { primary, pinch, predicted }) {
   ctx.beginPath();
   PALM.forEach((index, i) => (i ? ctx.lineTo : ctx.moveTo).call(ctx, ...points[index]));
   ctx.closePath();
-  ctx.fillStyle = "rgb(190 209 171 / 0.35)";
+  ctx.fillStyle = "rgb(120 220 202 / 0.18)";
   ctx.fill();
-  for (const [color, width] of [["rgb(255 254 250 / 0.85)", 11 * unit], [DEEP, 5 * unit]]) {
+  for (const [color, width] of [[DEEP, 11 * unit], [MINT, 5 * unit]]) {
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     ctx.beginPath();
@@ -461,7 +504,7 @@ function drawHand(points, { primary, pinch, predicted }) {
     const tip = TIPS.has(i);
     ctx.beginPath();
     ctx.arc(x, y, (tip ? 8 : 4.5) * unit, 0, Math.PI * 2);
-    ctx.fillStyle = pinch && (i === 4 || i === 8) ? DEEP : tip ? SAGE : PAPER;
+    ctx.fillStyle = pinch && (i === 4 || i === 8) ? CORAL : tip ? MINT : PAPER;
     ctx.fill();
     ctx.lineWidth = (tip ? 3 : 2.5) * unit;
     ctx.strokeStyle = DEEP;
@@ -486,6 +529,13 @@ function validPointer(pointer) {
 let lastStatsAt = 0;
 function trackingFrame(data) {
   if (!validPointer(data.pointer)) return;
+  lastTrackerFrameAt = performance.now();
+  if (!data.pointer.visible || data.pointer.cancelled) handPresent = false;
+  if (data.pointer.visible && data.pointer.observed === true && !data.pointer.predicted && !data.pointer.cancelled) {
+    lastObservedHandAt = lastTrackerFrameAt;
+    handPresent = true;
+  }
+  updateTrackingStatus();
   const geometry = data.camera ? `${data.camera.width}:${data.camera.height}` : null;
   if (cameraGeometry && geometry && cameraGeometry !== geometry) {
     projection.reset({ clearHand: true });
@@ -524,9 +574,10 @@ function connect() {
       return;
     }
     if (data?.type === "frame") trackingFrame(data);
-    else if (data?.type === "status" && data.level === "error") hide();
+    else if (data?.type === "status" && data.level === "error") { trackerDisconnected(); hide(); }
   });
   socket.addEventListener("close", () => {
+    trackerDisconnected();
     hide();
     projection.reset();
     alignmentStatus();
@@ -537,6 +588,7 @@ function connect() {
 
 // The tracker only sends while it sees frames; treat silence as a lost hand.
 setInterval(() => {
+  updateTrackingStatus();
   if ((!cursor.hidden || targets.size) && performance.now() - lastFrameAt > STALE_MS) hide();
   if (calibrationSession && performance.now() - lastFrameAt > STALE_MS) {
     calibrationSession.fit.interrupt('Waiting for your hand. Open your pinch, then try the target.');
@@ -546,10 +598,11 @@ setInterval(() => {
   projection.expire(performance.now());
   mappingChanged();
   alignmentStatus();
-  if (projection.enabled || calibrationSession) placeLayer();
+  if (projection.enabled || calibrationSession || !handNotice.hidden) placeLayer();
 }, 200);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { finishCalibration(); projection.reset(); mappingChanged(); hide(); }
+  updateTrackingStatus();
 });
 window.addEventListener("resize", () => {
   finishCalibration(); projection.reset({ clearHand: true }); mappingChanged();
@@ -562,6 +615,7 @@ if (window.WaveBoardDesktop) {
       try { data = JSON.parse(encoded); } catch { return; }
       if (data?.type === "frame") trackingFrame(data);
       else if (data?.type === "status" && data.level === "error") {
+        trackerDisconnected();
         hide();
         projection.reset();
         alignmentStatus();
@@ -569,7 +623,7 @@ if (window.WaveBoardDesktop) {
       }
     });
     bridge.startHands();
-  }).catch(() => hide());
+  }).catch(() => { trackerDisconnected(); hide(); });
 } else {
   connect();
 }
