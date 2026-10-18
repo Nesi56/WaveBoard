@@ -6,6 +6,22 @@ browse device and USB files, play videos, and present PowerPoint or PDF slides.
 Hand tracking turns pinches into taps and drags, with hand skeletons drawn over
 the workspace. Camera images are not uploaded or recorded.
 
+<p align="center">
+  <img src="docs/media/waveboard-hand-3d.gif" width="720"
+       alt="A hand skeleton drawn over the WaveBoard 3D viewer turns a dragon model as the presenter moves their hand in front of the webcam on top of the screen">
+</p>
+<p align="center"><a href="docs/media/waveboard-hand-3d.mp4">Watch the clip as a video (MP4, 4 seconds)</a></p>
+
+## See it in action
+
+| Hand in view | Hand over the model | Model turned by hand |
+| --- | --- | --- |
+| ![The presenter's hand appears as a skeleton beside a 3D dragon model](docs/media/waveboard-hand-beside-model.jpg) | ![The hand skeleton moves over the 3D model; the viewer shows "Pinch and drag to rotate"](docs/media/waveboard-hand-over-model.jpg) | ![The dragon model has turned to face another way as the hand moves](docs/media/waveboard-hand-turning-model.jpg) |
+
+A webcam on top of the screen watches the presenter's hand. WaveBoard draws the hand
+as a skeleton over the 3D viewer, never the camera image, and a thumb-and-index pinch
+grabs the model and turns it as the hand moves.
+
 ## A local app, with no hosting
 
 The normal launcher opens a Qt desktop window. Its bundled HTML/JavaScript interface
